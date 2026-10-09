@@ -42,8 +42,10 @@ def cmd_prepare(p):
 
 def cmd_render(p):
     data, chosen = chosen_moments(p)
-    total = sum(m.length + p.settings.plate_seconds for m in chosen)
-    log(f"Отобрано {len(chosen)} моментов ≈ {_tc(total + p.settings.outro_seconds)}")
+    s = p.settings
+    gap = s.plate_seconds if s.transition == "plate" else s.sting_seconds
+    total = sum(m.length + gap for m in chosen)
+    log(f"Отобрано {len(chosen)} моментов, до вырезки пауз ≈ {_tc(total + s.outro_seconds)}")
     render(p, chosen, data["sources"], log)
 
 

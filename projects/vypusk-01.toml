@@ -1,6 +1,6 @@
 # Выпуск №1: 7 стримов
 [video]
-title = "Лучшие моменты стримов"
+title = "Топ Моменты Стримов | Чьё Пузо Больше?"   # название на YouTube: «Топ Моменты Стримов | <Хук>»
 minutes = 45
 censor = "beep"         # аудитория — подростки: мат запикиваем
 
@@ -16,9 +16,11 @@ masks = [[0.0, 0.66, 0.20, 0.30]]
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2895082498"
+plate_side = "right"     # слева внизу вебка — плашку стримера справа
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2878584690"
+plate_side = "right"     # слева внизу вебка — плашку стримера справа
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2887268104"

@@ -1,7 +1,8 @@
 numpy>=1.26
 pillow>=10.0
 yt-dlp
-faster-whisper   # распознавание речи: запикивание мата (censor)
+faster-whisper   # распознавание речи: запикивание мата (censor), подписи и вырезка пауз
+opencv-python-headless   # поиск лица для зума на реакцию
 # только для пересборки логотипов (src/build.py):
 # uharfbuzz
 # fonttools

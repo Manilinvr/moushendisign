@@ -173,3 +173,153 @@ def outro(W, H) -> Image.Image:
     d.rectangle((0, y - 2, W, y + 2), fill=TRACK)
     d.rectangle((W // 2 - int(330 * k), y - 3, W // 2 + int(330 * k), y + 3), fill=LIME)
     return im
+
+
+# ---------------------------------------------------------------- стиль 2: поверх клипа
+
+SLANT = 0.36  # наклон «среза» у плашек: сдвиг по x на единицу высоты, как косой разрез в логотипе
+
+
+def _slanted(w, h, fill):
+    im = Image.new("RGBA", (w + int(h * SLANT), h), (0, 0, 0, 0))
+    ImageDraw.Draw(im).polygon([(0, 0), (w + int(h * SLANT), 0), (w, h), (0, h)], fill=fill)
+    return im
+
+
+def lower_third(W, *, name, login, followers, title=None, avatar=None, platform="Twitch") -> Image.Image:
+    """Плашка стримера поверх клипа: название момента на лайме, под ним аватар, ник, ссылка и фолловеры."""
+    k = W / 1920
+    fn, fl, fb = font(int(40 * k), 800), font(int(23 * k), 500), font(int(23 * k), 800)
+    link = f"{platform.lower()}.tv/{login}" if login else platform
+    line2 = f"{link}  ·  " if followers is not None else link
+    count = fmt_count(followers) if followers is not None else ""
+    text_w = max(fn.getlength(name), fl.getlength(line2) + fb.getlength(count))
+    av, pad = int(80 * k), int(16 * k)
+    cw, ch = int(av + pad * 2 + 22 * k + text_w + 34 * k), int(112 * k)
+    card = _slanted(cw, ch, INK + (232,))
+    d = ImageDraw.Draw(card)
+    ring = int(4 * k)
+    d.ellipse((pad - ring, (ch - av) // 2 - ring, pad + av + ring, (ch + av) // 2 + ring), fill=LIME)
+    card.alpha_composite(_avatar(avatar, av, name), (pad, (ch - av) // 2))
+    tx = pad * 2 + av + int(22 * k) - pad
+    d.text((tx, int(18 * k)), name, font=fn, fill=WHITE)
+    d.text((tx, int(70 * k)), line2, font=fl, fill=GRAY)
+    if count:
+        d.text((tx + fl.getlength(line2), int(70 * k)), count, font=fb, fill=LIME)
+    if not title:
+        return card
+    ft = font(int(28 * k), 800)
+    th = int(52 * k)
+    tag = _slanted(int(ft.getlength(title.upper()) + 40 * k), th, LIME + (255,))
+    ImageDraw.Draw(tag).text((int(20 * k), th // 2), title.upper(), font=ft, fill=INK, anchor="lm")
+    gap = int(10 * k)
+    out = Image.new("RGBA", (max(card.width, tag.width), th + gap + ch), (0, 0, 0, 0))
+    out.alpha_composite(tag, (0, 0))
+    out.alpha_composite(card, (0, th + gap))
+    return out
+
+
+def caption(W, text) -> Image.Image:
+    """Подпись-реакция: крупно белым с обводкой, последнее слово — на лаймовой плашке."""
+    k = W / 1920
+    f = font(int(88 * k), 900)
+    words = text.split()
+    gap, padx, ph = int(24 * k), int(18 * k), int(116 * k)
+    widths = [int(f.getlength(w)) for w in words]
+    total = sum(widths) + gap * (len(words) - 1) + padx * 2 + int(ph * SLANT)
+    while total > W * 0.92 and len(words) > 1:     # слишком длинно — оставляем последние слова
+        words, widths = words[1:], widths[1:]
+        total = sum(widths) + gap * (len(words) - 1) + padx * 2 + int(ph * SLANT)
+    im = Image.new("RGBA", (total + int(20 * k), ph + int(20 * k)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    x, y = int(10 * k), im.height // 2
+    for i, (w, ww) in enumerate(zip(words, widths)):
+        if i == len(words) - 1:
+            im.alpha_composite(_slanted(ww + padx * 2, ph, LIME + (255,)), (x, y - ph // 2 + int(4 * k)))
+            d.text((x + padx, y), w, font=f, fill=INK, anchor="lm")
+        else:
+            d.text((x, y), w, font=f, fill=WHITE, anchor="lm", stroke_width=int(9 * k), stroke_fill=INK)
+            x += ww + gap
+    return im
+
+
+def sting_frame(a: Image.Image, b: Image.Image, t: float) -> Image.Image:
+    """Кадр перехода (t от 0 до 1): лаймовый косой срез проходит по кадру, в середине — знак СРЕЗа."""
+    W, H = a.size
+    out = (a if t < 0.5 else b).convert("RGBA").copy()
+    span = W + H * SLANT * 2
+    lead = -H * SLANT + span * min(1, t * 1.6)
+    tail = -H * SLANT + span * max(0, (t - 0.38) * 1.6)
+    band = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(band).polygon([(tail, H), (tail + H * SLANT, 0), (lead + H * SLANT, 0), (lead, H)],
+                                 fill=LIME + (255,))
+    out.alpha_composite(band)
+    if 0.3 <= t <= 0.7:
+        import math
+        mark = Image.open(ROOT / "logo" / "srez-mark-black.png").convert("RGBA")
+        s = int(H * (0.30 + 0.06 * math.sin((t - 0.3) / 0.4 * math.pi)))
+        mark = mark.resize((s, s), Image.LANCZOS)
+        out.alpha_composite(mark, ((W - s) // 2, (H - s) // 2))
+    return out.convert("RGB")
+
+
+def thumbnail(img: Image.Image, box, *, nick, words, text_pos="bottom", W=1280, H=720) -> Image.Image:
+    """Превью по правилам канала: лицо справа, 2–3 слова слева снизу (последнее на лайме),
+    ник на тёмной плашке слева сверху, логотип СРЕЗа справа сверху, правый нижний угол пустой.
+    text_pos="top" — слова слева сверху под ником, если главное в кадре внизу."""
+    from PIL import ImageEnhance
+    k = W / 1280
+    x, y, w, h = box
+    base = img.convert("RGB").crop((x, y, x + w, y + h)).resize((W, H), Image.LANCZOS)
+    base = ImageEnhance.Contrast(ImageEnhance.Color(base).enhance(1.25)).enhance(1.12)
+    im = base.convert("RGBA")
+    # затемнение слева снизу под текст
+    grad = Image.new("L", (W, H), 0)
+    gd = ImageDraw.Draw(grad)
+    for i in range(0, W, 4):
+        for j in range(0, H, 4):
+            dy = (j / H) if text_pos == "top" else (1 - j / H)
+            v = max(0.0, 1 - ((i / W) / 0.62) ** 2 - (dy / 0.75) ** 2)
+            gd.rectangle((i, j, i + 3, j + 3), fill=int(215 * v))
+    shade = Image.new("RGBA", (W, H), INK + (255,))
+    shade.putalpha(grad.filter(ImageFilter.GaussianBlur(20 * k)))
+    im.alpha_composite(shade)
+    d = ImageDraw.Draw(im)
+    # ник слева сверху
+    fn = font(int(30 * k), 800)
+    nw = int(fn.getlength(nick))
+    d.rounded_rectangle((int(28 * k), int(28 * k), int(28 * k + 64 * k + nw), int(84 * k)), radius=int(28 * k),
+                        fill=INK + (230,))
+    d.ellipse((int(46 * k), int(48 * k), int(62 * k), int(64 * k)), fill=LIME)
+    d.text((int(76 * k), int(56 * k)), nick, font=fn, fill=WHITE, anchor="lm")
+    # логотип канала справа сверху, с тенью — как фирменный знак серии
+    logo = Image.open(LOGO).convert("RGBA")
+    lh = int(64 * k)
+    logo = logo.resize((int(logo.width * lh / logo.height), lh), Image.LANCZOS)
+    pos = (W - logo.width - int(30 * k), int(30 * k))
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    glow.paste(logo, pos, logo)
+    halo = glow.getchannel("A").filter(ImageFilter.GaussianBlur(10 * k)).point(lambda v: min(255, v * 2))
+    dark = Image.new("RGBA", (W, H), INK + (255,))
+    dark.putalpha(halo)
+    im.alpha_composite(dark)
+    im.alpha_composite(glow)
+    # 2–3 слова слева снизу: не шире левой половины кадра
+    lines = words if isinstance(words, list) else words.split()
+    size = int(96 * k)
+    while size > 40 and max(font(size, 900).getlength(x) for x in lines) > W * 0.46:
+        size -= 4
+    f = font(size, 900)
+    step, ph = int(size * 1.1), int(size * 1.14)
+    y0 = (int(112 * k) + ph // 2 if text_pos == "top"
+          else H - int(36 * k) - ph // 2 - (len(lines) - 1) * step)
+    for i, wd in enumerate(lines):
+        yy = y0 + i * step
+        if i == len(lines) - 1:
+            ww = int(f.getlength(wd))
+            im.alpha_composite(_slanted(ww + int(40 * k), ph, LIME + (255,)), (int(30 * k), yy - ph // 2))
+            d.text((int(50 * k), yy), wd, font=f, fill=INK, anchor="lm")
+        else:
+            d.text((int(40 * k), yy), wd, font=f, fill=WHITE, anchor="lm", stroke_width=int(8 * k),
+                   stroke_fill=INK)
+    return im.convert("RGB")

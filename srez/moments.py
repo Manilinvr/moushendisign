@@ -1,5 +1,5 @@
 """Поиск пиковых моментов, их границ и сборка списка для ролика."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
@@ -17,6 +17,9 @@ class Moment:
     label: str = "момент"
     keep: bool = True
     title: str = ""
+    zoom_at: float | None = None   # секунда клипа для зума на реакцию; None — сам найдёт, -1 — без зума
+    caption: str = ""              # подпись-реакция; "" — из распознанной речи, "-" — без подписи
+    sfx: list = field(default_factory=list)   # [["ding", 12.3], …] — звуки в секундах клипа
 
     @property
     def length(self):
@@ -131,7 +134,9 @@ def select(per_source: dict[str, list[Moment]], s) -> list[Moment]:
             continue
         chosen.append(m)
         used[m.source] += m.length
-        total += m.length + s.plate_seconds
+        # в стиле sting между клипами переход 0,4 с, а паузы внутри клипов вырезаются (~10%)
+        total += (m.length + s.plate_seconds if s.transition == "plate"
+                  else m.length * (0.9 if s.jumpcut > 0 else 1) + s.sting_seconds)
     return arrange(chosen, s)
 
 

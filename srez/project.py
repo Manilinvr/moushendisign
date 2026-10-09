@@ -22,7 +22,15 @@ class Settings:
     fps: int = 30
     preset: str = "veryfast"     # пресет x264: быстрее — ultrafast, качественнее — medium
     crf: int = 20
-    plate_seconds: float = 1.4   # длительность плашки перед клипом
+    plate_seconds: float = 1.4   # длительность плашки перед клипом (transition = "plate")
+    transition: str = "sting"    # sting — переход 0,4 с с логотипом; plate — плашка стримера перед клипом
+    sting_seconds: float = 0.4
+    lower_third: float = 4.0     # сколько секунд держится плашка стримера поверх клипа; 0 — без неё
+    zoom: bool = True            # зум на лицо в момент реакции (со звуком «бум»)
+    captions: bool = True        # подпись-реакция из 2–3 слов на зуме
+    jumpcut: float = 0.8         # вырезать паузы без слов длиннее этого (сек); 0 — не вырезать
+    hook: int = 3                # сколько панчлайнов показать в самом начале; 0 — без хука
+    music: str = "funkorama"     # музыка под хук и концовку (каталог в srez/sfx.py); "" — без музыки
     mask_style: str = "blur"     # как закрывать рекламу: blur — размыть, fill — закрасить
     censor: str = "off"          # мат: beep — запикать, mute — заглушить, off — оставить
     intro: bool = False          # короткая заставка с логотипом в начале
@@ -86,6 +94,7 @@ class Source:
     title: str | None = None          # название трансляции (для описания)
     vod_url: str | None = None
     masks: list[Mask] = field(default_factory=list)
+    plate_side: str = "left"          # где плашка стримера поверх клипа: left или right (если там вебка)
 
 
 @dataclass
@@ -147,6 +156,7 @@ def load(path: str | Path) -> Project:
             twitch=(s.get("twitch") or "").lower() or None, name=s.get("name"),
             followers=s.get("followers"), avatar=rel(s.get("avatar")),
             platform=s.get("platform", "Twitch"), vod_url=url, masks=parse_masks(s.get("masks")),
+            plate_side=s.get("plate_side", "left"),
         ))
     if not sources:
         raise ValueError("В проекте нет ни одного [[stream]]")
