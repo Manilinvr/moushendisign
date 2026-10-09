@@ -45,12 +45,37 @@ def info(url: str) -> dict:
 def audio(url: str, workdir: Path) -> Path:
     workdir.mkdir(parents=True, exist_ok=True)
     done = list(workdir.glob("audio.*"))
-    done = [p for p in done if p.suffix not in (".part", ".ytdl")]
+    done = [p for p in done if p.suffix not in (".part", ".ytdl", ".raw")]
     if done:
         return done[0]
-    run(["yt-dlp", "--no-warnings", "-N", "8", "-f", "audio_only/Audio_Only/bestaudio/worst",
-         "-o", str(workdir / "audio.%(ext)s"), url], quiet=False)
-    return next(p for p in workdir.glob("audio.*") if p.suffix not in (".part", ".ytdl"))
+    try:
+        run(["yt-dlp", "--no-warnings", "-N", "8", "-f", "audio_only/Audio_Only/bestaudio/worst",
+             "-o", str(workdir / "audio.%(ext)s"), url], quiet=False)
+    except ToolError:
+        # стрим ещё идёт: yt-dlp качает его через ffmpeg и не может — берём уже записанное сегментами
+        return _hls_audio(url, workdir / "audio.m4a")
+    return next(p for p in workdir.glob("audio.*") if p.suffix not in (".part", ".ytdl", ".raw"))
+
+
+def _hls_audio(url: str, out: Path) -> Path:
+    """Звук записи целиком по сегментам HLS (работает и для записи стрима, который ещё в эфире)."""
+    from concurrent.futures import ThreadPoolExecutor
+    m3u8 = run(["yt-dlp", "--no-warnings", "-g", "-f", "audio_only/Audio_Only/worst", url]).split()[0]
+    text = _get(m3u8).decode("utf-8", "replace")
+    init = re.search(r'#EXT-X-MAP:URI="([^"]+)"', text)
+    segs = [urljoin(m3u8, ln.strip()) for ln in text.splitlines() if ln.strip() and not ln.startswith("#")]
+    raw = out.with_suffix(".raw")
+    with raw.open("wb") as f:
+        if init:
+            f.write(_get(urljoin(m3u8, init.group(1))))
+        with ThreadPoolExecutor(8) as ex:
+            for chunk in ex.map(_get, segs):      # map сохраняет порядок сегментов
+                f.write(chunk)
+    try:
+        ffmpeg("-i", raw, "-map", "0:a:0", "-c", "copy", out)
+    finally:
+        raw.unlink(missing_ok=True)
+    return out
 
 
 @functools.lru_cache(maxsize=None)
