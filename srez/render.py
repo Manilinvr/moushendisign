@@ -391,7 +391,10 @@ def render(project, moments, meta, log=print):
     if styled:
         def edge(clip, at_end):
             p = w / f"edge_{clip.stem}_{'b' if at_end else 'a'}.jpg"
-            frame(clip, max(0.0, duration(clip) - 0.05) if at_end else 0.0, p)
+            if at_end:   # последний кадр: читаем хвост и оставляем последний записанный
+                ffmpeg("-sseof", "-0.5", "-i", clip, "-update", "1", "-q:v", "3", p)
+            else:
+                frame(clip, 0.0, p)
             return p
 
         hook_n = min(s.hook, len(built))
