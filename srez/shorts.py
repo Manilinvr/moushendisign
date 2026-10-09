@@ -256,10 +256,11 @@ def _ass_time(t):
 def _stars(w):
     """Мат звёздочками: первая буква и одна-две последние остаются (БЛЯТЬ → Б**ТЬ, ЕБУ → Е*У)."""
     import re
-    m = re.match(r"^(\W*)(\w+)(\W*)$", w)
+    m = re.match(r"^(\W*)([\w-]+?)(\W*)$", w)
     if not m:
         return w
     pre, core, post = m.groups()
+    core = core.replace("-", "")                       # «уй-ё-бищ» → одно слово под звёздочками
     n = len(core)
     keep = 2 if n >= 5 else 1
     if n <= 2:
