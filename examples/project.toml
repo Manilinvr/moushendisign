@@ -1,0 +1,35 @@
+# Проект выпуска СРЕЗ. Скопируйте файл, впишите свои стримы и запустите:
+#   python -m srez auto examples/project.toml
+
+[video]
+title = "Лучшие моменты недели"
+minutes = 30            # длина ролика: 30 или 60
+# Необязательные настройки (здесь значения по умолчанию):
+# clip_min = 12         # самый короткий момент, сек
+# clip_max = 75         # самый длинный момент, сек
+# order = "mix"         # "mix" — стримеры вперемешку, "stream" — по очереди
+# fps = 30
+# preset = "veryfast"   # "medium" — качественнее, но дольше
+# intro = false         # заставка с логотипом перед первым клипом
+# outro_seconds = 12    # концовка под конечные элементы YouTube
+# skip_start = 60       # пропустить «скоро начнём» в начале стрима
+# followers_label = "фолловеров на Twitch"
+
+# Стрим по ссылке на запись (VOD) с Twitch: имя, фолловеры, аватар и чат
+# подтянутся сами.
+[[stream]]
+url = "https://www.twitch.tv/videos/1234567890"
+
+# Стрим, скачанный файлом. Логин на Twitch нужен для плашки.
+[[stream]]
+file = "streams/stream2.mp4"
+twitch = "login_streamera"
+
+# Всё можно задать вручную, если Twitch недоступен:
+# [[stream]]
+# file = "streams/stream3.mp4"
+# twitch = "login"
+# name = "Красивое Имя"
+# followers = 1250000
+# avatar = "streams/avatar.jpg"
+# chat = "streams/stream3_chat.json"   # JSON из TwitchDownloader или наш JSONL

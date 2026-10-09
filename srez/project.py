@@ -1,0 +1,110 @@
+"""Описание проекта (какие стримы, сколько минут) из TOML-файла."""
+import re
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class Settings:
+    minutes: float = 30          # целевая длина ролика
+    clip_min: float = 12         # самый короткий момент, сек
+    clip_max: float = 75         # самый длинный момент, сек
+    pre_roll: float = 18         # сколько брать до пика реакции
+    post_roll: float = 10        # и после него
+    chat_delay: float = 8        # чат реагирует позже, чем происходит событие
+    min_gap: float = 45          # минимальное расстояние между моментами одного стрима
+    skip_start: float = 60       # пропустить начало стрима («скоро начнём», приветствия)
+    skip_end: float = 30         # и прощание в конце
+    order: str = "mix"           # mix — чередовать стримеров, stream — по стримам подряд
+    width: int = 1920
+    height: int = 1080
+    fps: int = 30
+    preset: str = "veryfast"     # пресет x264: быстрее — ultrafast, качественнее — medium
+    crf: int = 20
+    plate_seconds: float = 2.2   # длительность плашки перед клипом
+    intro: bool = False          # короткая заставка с логотипом в начале
+    outro_seconds: float = 12    # финальная заставка под конечные элементы YouTube
+    followers_label: str = "фолловеров на Twitch"
+    jobs: int = 0                # параллельных ffmpeg; 0 — по числу ядер
+
+
+@dataclass
+class Source:
+    id: str
+    url: str | None = None
+    file: Path | None = None
+    chat: Path | None = None
+    twitch: str | None = None         # логин канала на Twitch
+    name: str | None = None           # отображаемое имя, если хочется переопределить
+    followers: int | None = None      # ручное значение, если Twitch недоступен
+    avatar: Path | None = None
+    platform: str = "Twitch"
+    title: str | None = None          # название трансляции (для описания)
+    vod_url: str | None = None
+
+
+@dataclass
+class Project:
+    path: Path
+    title: str
+    settings: Settings
+    sources: list[Source] = field(default_factory=list)
+
+    @property
+    def root(self) -> Path:
+        return self.path.parent
+
+    @property
+    def name(self) -> str:
+        return self.path.stem
+
+    @property
+    def work(self) -> Path:
+        return self.root / "work" / self.name
+
+    @property
+    def out(self) -> Path:
+        return self.root / "output"
+
+
+def _slug(text: str) -> str:
+    s = re.sub(r"[^\w-]+", "_", text, flags=re.UNICODE).strip("_").lower()
+    return s[:40] or "stream"
+
+
+def load(path: str | Path) -> Project:
+    path = Path(path).resolve()
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    video = data.get("video", {})
+    settings = Settings(**{k: v for k, v in video.items() if k != "title"})
+
+    def rel(p):
+        if not p:
+            return None
+        p = Path(p).expanduser()
+        return p if p.is_absolute() else (path.parent / p).resolve()
+
+    sources, seen = [], set()
+    for i, s in enumerate(data.get("stream", []), 1):
+        url, file = s.get("url"), rel(s.get("file"))
+        if not url and not file:
+            raise ValueError(f"[[stream]] №{i}: нужен url или file")
+        if file and not file.exists():
+            raise FileNotFoundError(f"[[stream]] №{i}: файл не найден: {file}")
+        m = re.search(r"twitch\.tv/videos/(\d+)", url or "")
+        base = f"vod{m.group(1)}" if m else _slug(file.stem if file else url.rsplit("/", 1)[-1])
+        sid, n = base, 2
+        while sid in seen:
+            sid, n = f"{base}_{n}", n + 1
+        seen.add(sid)
+        sources.append(Source(
+            id=sid, url=url, file=file, chat=rel(s.get("chat")),
+            twitch=(s.get("twitch") or "").lower() or None, name=s.get("name"),
+            followers=s.get("followers"), avatar=rel(s.get("avatar")),
+            platform=s.get("platform", "Twitch"), vod_url=url,
+        ))
+    if not sources:
+        raise ValueError("В проекте нет ни одного [[stream]]")
+    return Project(path=path, title=video.get("title", "Лучшие моменты стримов"),
+                   settings=settings, sources=sources)

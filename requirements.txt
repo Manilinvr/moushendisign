@@ -1,0 +1,6 @@
+numpy>=1.26
+pillow>=10.0
+yt-dlp
+# только для пересборки логотипов (src/build.py):
+# uharfbuzz
+# fonttools
