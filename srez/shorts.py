@@ -19,6 +19,7 @@
 Берётся всё из выпуска: исходники клипов, маски рекламы, запикивание мата и распознанные слова.
 Паузы короче, чем в выпуске (шортс должен лететь), мат в субтитрах — звёздочками.
 """
+import hashlib
 import json
 import subprocess
 import tomllib
@@ -72,8 +73,10 @@ def _part(spec_part, cache):
     src, off = _source_media(p, m, p.work / "render")
     cc = json.loads((p.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json").read_text(encoding="utf-8"))
     info = data["sources"][m.source]
+    bleeps = [tuple(x) for x in cc["spans"]]
+    bleeps += [(max(0.0, x - censor.PAD_BEFORE), y + censor.PAD_AFTER) for x, y, t in cc["words"] if censor.is_bad(t)]
     return {"p": p, "m": m, "src": src, "off": off, "a": float(a), "b": float(b), "masks": masks[m.source],
-            "bleeps": [tuple(x) for x in cc["spans"]], "words": [tuple(x) for x in cc["words"]],
+            "bleeps": sorted(bleeps), "words": [tuple(x) for x in cc["words"]],
             "name": info["name"], "login": info.get("login")}
 
 
@@ -211,10 +214,24 @@ def _ass_time(t):
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
 
 
+def _stars(w):
+    """Мат звёздочками: первая буква и одна-две последние остаются (БЛЯТЬ → Б**ТЬ, ЕБУ → Е*У)."""
+    import re
+    m = re.match(r"^(\W*)(\w+)(\W*)$", w)
+    if not m:
+        return w
+    pre, core, post = m.groups()
+    n = len(core)
+    keep = 2 if n >= 5 else 1
+    if n <= 2:
+        return pre + core[0] + "*" * (n - 1) + post
+    return pre + core[0] + "*" * (n - 1 - keep) + core[-keep:] + post
+
+
 def _word(w):
     w = w.strip()
-    if "*" in w or censor.is_bad(w):
-        return edit.bleep_text(w) if "*" not in w else w.upper()
+    if "*" not in w and censor.is_bad(w):
+        w = _stars(w)
     return w.upper()
 
 
@@ -274,7 +291,10 @@ def build(sh: dict, out_dir: Path, log=print):
     segs, words, t = [], [], 0.0
     for pi, pt in enumerate(parts):
         for si, (a, b) in enumerate(_intervals(pt)):
-            seg = work / f"seg_{pi}_{si}_{a:.2f}-{b:.2f}.mkv"
+            sig = hashlib.md5(repr(([x for x in pt["bleeps"] if x[1] > a and x[0] < b],
+                                    [x for x in pt["masks"] if x.active(pt["m"].start + a, pt["m"].start + b)]))
+                              .encode()).hexdigest()[:8]           # другие маски или мат — другой файл
+            seg = work / f"seg_{pi}_{si}_{a:.2f}-{b:.2f}_{sig}.mkv"
             if not seg.exists():
                 _segment(pt, a, b, seg)
             segs.append(seg)
