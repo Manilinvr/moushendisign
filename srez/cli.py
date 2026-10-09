@@ -7,6 +7,7 @@
     python -m srez prepare проект.toml   скачать нужные куски видео и найти рекламу на экране
     python -m srez render  проект.toml   смонтировать ролик из найденного
     python -m srez auto    проект.toml   всё сразу
+    python -m srez shorts  шортсы.toml   вертикальные YouTube Shorts из выпусков (см. srez/shorts.py)
     python -m srez check                 проверить, что всё установлено
 """
 import argparse
@@ -80,9 +81,18 @@ def main(argv=None):
         if name == "transcripts":
             sp.add_argument("--top", type=int, default=30, help="сколько лучших кандидатов каждого стрима")
     sub.add_parser("check")
+    sp = sub.add_parser("shorts")
+    sp.add_argument("file", help="файл шортсов .toml")
+    sp.add_argument("only", nargs="?", help="номер или часть имени — собрать только его")
     a = ap.parse_args(argv)
     if a.cmd == "check":
         return cmd_check(a)
+    if a.cmd == "shorts":
+        from . import shorts
+        t0 = time.time()
+        shorts.run(a.file, a.only, log)
+        log(f"Заняло {_tc(time.time() - t0)}")
+        return
     p = proj.load(a.project)
     if a.minutes:
         p.settings.minutes = a.minutes

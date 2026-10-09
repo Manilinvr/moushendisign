@@ -1,0 +1,114 @@
+# Шортсы из выпусков №1 и №2 (формат — в srez/shorts.py). Собрать: python -m srez shorts projects/shorts-01.toml
+# Рамки вебок (доли кадра 1920×1080) — для раскладки split «вебка сверху, игра снизу».
+#   ZLOYn    [0, 0.588, 0.232, 0.412]     Stray228 [0, 0.68, 0.229, 0.32]     StRoGo [0, 0.43, 0.195, 0.173]
+#   sasavot  [0, 0.282, 0.228, 0.271]     RavshanN (экран) [0, 0.725, 0.234, 0.275]
+#   Dmitry_Lixxx [0.708, 0.694, 0.292, 0.306]
+
+[[short]]
+name = "01_ravshan_maskirovka"
+title = "Равшан спрятался от [фанатов]"
+layout = "face"
+parts = [["vypusk-02", "vod2895984355-05", 16.5, 51.5]]
+drop = ["неп", "returned", "скаррр", "скаррр!"]
+
+[[short]]
+name = "02_zloyn_genii"
+title = "Злой — [гений] Майнкрафта"
+layout = "split"
+cam = [0, 0.588, 0.232, 0.412]
+parts = [["vypusk-02", "vod2895957452-36", 23.5, 33.0],
+         ["vypusk-02", "vod2895957452-38", 3.0, 10.0],
+         ["vypusk-02", "vod2895957452-39", 9.5, 18.0]]
+
+[[short]]
+name = "03_stray_shtorm"
+title = "Шторм [преследует] Стрея по всей карте"
+layout = "split"
+cam = [0, 0.68, 0.229, 0.32]
+parts = [["vypusk-02", "vod2895336516-107", 28.5, 50.5]]
+
+[[short]]
+name = "04_stray_novichok"
+title = "Глупый юнец, [новичок-боровичок]"
+layout = "split"
+cam = [0, 0.68, 0.229, 0.32]
+parts = [["vypusk-02", "vod2895336516-10", 9.5, 35.5]]
+
+[[short]]
+name = "05_strogo_golovolomka"
+title = "Чемпион по CS против [детской игры]"
+layout = "split"
+cam = [0, 0.43, 0.195, 0.173]
+game_x = 0.52
+parts = [["vypusk-02", "vod2895857829-81", 1.5, 8.0],
+         ["vypusk-02", "vod2895857829-81", 19.5, 22.5],
+         ["vypusk-02", "vod2895857829-81", 34.5, 37.5],
+         ["vypusk-02", "vod2895857829-81", 53.0, 68.0]]
+
+[[short]]
+name = "06_sasavot_mishka"
+title = "Сасавот спасает [мишку]"
+layout = "split"
+cam = [0, 0.282, 0.228, 0.271]
+parts = [["vypusk-02", "vod2895198615-44", 16.5, 26.0],
+         ["vypusk-02", "vod2895198615-44", 31.0, 46.0]]
+
+[[short]]
+name = "07_paradeev_sel"
+title = "«Сел, я [сказал]!»"
+layout = "face"
+parts = [["vypusk-01", "vod2878584690-08", 10.0, 35.0]]
+
+[[short]]
+name = "08_paradeev_vechnyi_strim"
+title = "Компьютер выключен, а стрим [идёт]"
+layout = "face"
+parts = [["vypusk-01", "vod2878584690-120", 11.0, 32.0]]
+
+[[short]]
+name = "09_paradeev_sid"
+title = "«Я как [Сид] из Ледникового периода»"
+layout = "face"
+face_x = 0.25
+parts = [["vypusk-01", "vod2878584690-86", 2.5, 27.0]]
+
+[[short]]
+name = "10_leva_bibop"
+title = "Вольт стал похож на [Бибопа]"
+layout = "face"
+face_x = 0.28
+parts = [["vypusk-02", "vod2895905440-04", 20.0, 42.0]]
+
+[[short]]
+name = "11_zloyn_salmonella"
+title = "Злой узнал про [сальмонеллу]"
+layout = "split"
+cam = [0, 0.588, 0.232, 0.412]
+parts = [["vypusk-02", "vod2895957452-23", 17.5, 36.0]]
+
+[[short]]
+name = "12_ravshan_kolyaska"
+title = "Равшан выбирает [VIP-коляску]"
+layout = "split"
+cam = [0, 0.725, 0.234, 0.275]
+parts = [["vypusk-02", "vod2895984355-98", 0.0, 8.0],
+         ["vypusk-02", "vod2895984355-98", 15.5, 40.0]]
+
+[[short]]
+name = "13_enzzai_ulica"
+title = "Совет всем зрителям: [идите на улицу]"
+layout = "face"
+parts = [["vypusk-02", "vod2896002981-03", 19.5, 44.0]]
+
+[[short]]
+name = "14_gensyxa_knopka"
+title = "GENSYXA не может [нажать кнопку]"
+layout = "fit"
+parts = [["vypusk-01", "vod2895082498-91", 20.5, 37.5]]
+
+[[short]]
+name = "15_dmitry_ochki"
+title = "Донат: «вы как [педагог]»"
+layout = "split"
+cam = [0.708, 0.694, 0.292, 0.306]
+parts = [["vypusk-01", "vod2895015095-16", 12.5, 31.0]]
