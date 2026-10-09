@@ -3,7 +3,7 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import fetch, plates
+from . import censor, fetch, plates
 from .media import cpu_count, duration, ffmpeg, frame, probe
 
 AENC_PCM = ["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"]
@@ -48,7 +48,7 @@ def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur"):
     return out, cur
 
 
-def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.0):
+def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.0, bleeps=()):
     W, H = s.width, s.height
     info = probe(src)
     v = next(x for x in info["streams"] if x["codec_type"] == "video")
@@ -58,8 +58,9 @@ def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.
                  f"fade=t=in:st=0:d=0.12[v]")
     audio = any(x["codec_type"] == "audio" for x in info["streams"])
     if audio:
-        graph.append("[0:a:0]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,"
-                     f"afade=t=in:d=0.1,afade=t=out:st={max(0, dur - 0.25):.2f}:d=0.25[a]")
+        graph.append("[0:a:0]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[sp0]")
+        graph += censor.audio_filter(bleeps, dur, s.censor)
+        graph.append(f"[sp]afade=t=in:d=0.1,afade=t=out:st={max(0, dur - 0.25):.2f}:d=0.25[a]")
     tmp = out.with_name(out.stem + ".tmp.mkv")
     inp = ["-ss", f"{offset:.3f}", "-t", f"{dur:.3f}", "-i", src]
     if not audio:
@@ -172,6 +173,20 @@ def prepare(project, moments, log=print):
     return media
 
 
+def censor_spans(project, moments, log=print):
+    """Где в каждом клипе мат: распознаём речь клипов (результат кэшируется)."""
+    w = project.work / "render"
+    log(f"Ищу мат в {len(moments)} клипах…")
+    out = {}
+    for i, m in enumerate(moments, 1):
+        path, off = _source_media(project, m, w)
+        cache = project.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json"
+        out[m.id] = censor.spans(path, off, m.length, cache)
+        if i % 10 == 0 or i == len(moments):
+            log(f"  проверено {i}/{len(moments)}, запикать: {sum(len(v) for v in out.values())} слов")
+    return out
+
+
 def render(project, moments, meta, log=print):
     s = project.settings
     W, H = s.width, s.height
@@ -181,6 +196,7 @@ def render(project, moments, meta, log=print):
     jobs = s.jobs or max(1, cpu_count() // 2)
     threads = max(1, cpu_count() // jobs)
     masks = load_masks(project)
+    bleeps = censor_spans(project, moments, log) if s.censor != "off" else {}
 
     def build(item):
         i, m = item
@@ -189,10 +205,13 @@ def render(project, moments, meta, log=print):
         key = f"{m.start:.1f}-{m.end:.1f}"
         if mk:  # другие маски — другой файл, чтобы не взять старый клип из кэша
             key += "_m" + hashlib.md5(repr((s.mask_style, mk)).encode()).hexdigest()[:8]
+        bl = bleeps.get(m.id, [])
+        if bl:  # то же для запикивания
+            key += "_b" + hashlib.md5(repr((s.censor, bl)).encode()).hexdigest()[:8]
         clip = w / f"clip_{m.id}_{key}.mkv"
         if not clip.exists():
             path, off = _source_media(project, m, w)
-            encode_clip(path, off, m.length, clip, s, threads, masks=mk, clip_start=m.start)
+            encode_clip(path, off, m.length, clip, s, threads, masks=mk, clip_start=m.start, bleeps=bl)
         fr = frame(clip, 0.5, w / f"frame_{m.id}.jpg", width=W // 2)
         card = plates.streamer_card(
             W, H, name=info["name"], login=info.get("login"), followers=info.get("followers"),

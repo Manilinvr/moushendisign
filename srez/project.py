@@ -24,6 +24,7 @@ class Settings:
     crf: int = 20
     plate_seconds: float = 1.4   # длительность плашки перед клипом
     mask_style: str = "blur"     # как закрывать рекламу: blur — размыть, fill — закрасить
+    censor: str = "off"          # мат: beep — запикать, mute — заглушить, off — оставить
     intro: bool = False          # короткая заставка с логотипом в начале
     outro_seconds: float = 12    # финальная заставка под конечные элементы YouTube
     followers_label: str = "фолловеров на Twitch"

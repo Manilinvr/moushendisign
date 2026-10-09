@@ -2,6 +2,7 @@
 [video]
 title = "Лучшие моменты стримов"
 minutes = 45
+censor = "beep"         # аудитория — подростки: мат запикиваем
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2890918336"

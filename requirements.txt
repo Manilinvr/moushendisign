@@ -1,6 +1,7 @@
 numpy>=1.26
 pillow>=10.0
 yt-dlp
+faster-whisper   # распознавание речи: запикивание мата (censor)
 # только для пересборки логотипов (src/build.py):
 # uharfbuzz
 # fonttools
