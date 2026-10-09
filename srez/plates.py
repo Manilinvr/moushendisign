@@ -308,15 +308,22 @@ def thumbnail(img: Image.Image, box, *, nick, words, text_pos="bottom", W=1280, 
     shade = Image.new("RGBA", (W, H), INK + (255,))
     shade.putalpha(grad.filter(ImageFilter.GaussianBlur(20 * k)))
     im.alpha_composite(shade)
+    brand(im, nick)
+    words_block(im, words, text_pos=text_pos)
+    return im.convert("RGB")
+
+
+def brand(im: Image.Image, nick):
+    """Ник на тёмной плашке слева сверху и логотип СРЕЗа справа сверху (с тёмным ореолом) — на месте, в RGBA."""
+    W, H = im.size
+    k = W / 1280
     d = ImageDraw.Draw(im)
-    # ник слева сверху
     fn = font(int(30 * k), 800)
     nw = int(fn.getlength(nick))
     d.rounded_rectangle((int(28 * k), int(28 * k), int(28 * k + 64 * k + nw), int(84 * k)), radius=int(28 * k),
                         fill=INK + (230,))
     d.ellipse((int(46 * k), int(48 * k), int(62 * k), int(64 * k)), fill=LIME)
     d.text((int(76 * k), int(56 * k)), nick, font=fn, fill=WHITE, anchor="lm")
-    # логотип канала справа сверху, с тенью — как фирменный знак серии
     logo = Image.open(LOGO).convert("RGBA")
     lh = int(64 * k)
     logo = logo.resize((int(logo.width * lh / logo.height), lh), Image.LANCZOS)
@@ -328,10 +335,16 @@ def thumbnail(img: Image.Image, box, *, nick, words, text_pos="bottom", W=1280, 
     dark.putalpha(halo)
     im.alpha_composite(dark)
     im.alpha_composite(glow)
-    # 2–3 слова слева снизу: не шире левой половины кадра
+
+
+def words_block(im: Image.Image, words, *, text_pos="bottom", max_w=0.46, size=96, x=0):
+    """2–3 слова слева (снизу или сверху под ником): белые с обводкой, последнее — на лаймовой косой плашке."""
+    W, H = im.size
+    k = W / 1280
+    d = ImageDraw.Draw(im)
     lines = words if isinstance(words, list) else words.split()
-    size = int(96 * k)
-    while size > 40 and max(font(size, 900).getlength(x) for x in lines) > W * 0.46:
+    size = int(size * k)
+    while size > 40 and max(font(size, 900).getlength(t) for t in lines) > W * max_w:
         size -= 4
     f = font(size, 900)
     step, ph = int(size * 1.1), int(size * 1.14)
@@ -341,9 +354,8 @@ def thumbnail(img: Image.Image, box, *, nick, words, text_pos="bottom", W=1280, 
         yy = y0 + i * step
         if i == len(lines) - 1:
             ww = int(f.getlength(wd))
-            im.alpha_composite(_slanted(ww + int(40 * k), ph, LIME + (255,)), (int(30 * k), yy - ph // 2))
-            d.text((int(50 * k), yy), wd, font=f, fill=INK, anchor="lm")
+            im.alpha_composite(_slanted(ww + int(40 * k), ph, LIME + (255,)), (x + int(30 * k), yy - ph // 2))
+            d.text((x + int(50 * k), yy), wd, font=f, fill=INK, anchor="lm")
         else:
-            d.text((int(40 * k), yy), wd, font=f, fill=WHITE, anchor="lm", stroke_width=int(8 * k),
+            d.text((x + int(40 * k), yy), wd, font=f, fill=WHITE, anchor="lm", stroke_width=int(8 * k),
                    stroke_fill=INK)
-    return im.convert("RGB")

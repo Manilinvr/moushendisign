@@ -3,6 +3,8 @@ pillow>=10.0
 yt-dlp
 faster-whisper   # распознавание речи: запикивание мата (censor), подписи и вырезка пауз
 opencv-python-headless   # поиск лица для зума на реакцию
+rembg            # превью-постер: стример вырезан из кадра (srez/poster.py)
+scipy            # там же: чистка вырезки от лишних кусков
 # только для пересборки логотипов (src/build.py):
 # uharfbuzz
 # fonttools
