@@ -150,15 +150,31 @@ def arrange(chosen: list[Moment], s) -> list[Moment]:
     if s.order == "stream":
         middle.sort(key=lambda m: (m.source, m.start))
     else:
-        # по кругу между стримерами, внутри стрима — в хронологии
+        # стримеры вперемешку и равномерно по всему ролику (у кого клипов больше — чаще,
+        # но не пачкой в конце), внутри стрима — в хронологии
         queues = {}
         for m in sorted(middle, key=lambda m: m.start):
             queues.setdefault(m.source, []).append(m)
         keys = sorted(queues, key=lambda k: -max(m.score for m in queues[k]))
-        middle, last = [], None
-        while any(queues.values()):
-            for k in keys:
-                if queues[k] and (k != last or sum(1 for q in queues.values() if q) == 1):
-                    middle.append(queues[k].pop(0))
-                    last = k
+        slots = sorted(((i + 0.5) / len(queues[k]), j, m)
+                       for j, k in enumerate(keys) for i, m in enumerate(queues[k]))
+        middle = [m for *_, m in slots]
+        # один стример два раза подряд (и рядом с открытием/финалом) — меняем с ближайшим клипом,
+        # который никому не станет соседом-однофамильцем
+        seq = [opener, *middle, closer]
+
+        def clash(i):
+            return any(0 <= j < len(seq) and seq[j].source == seq[i].source for j in (i - 1, i + 1))
+
+        for i in range(1, len(seq) - 1):
+            if not clash(i):
+                continue
+            for j in sorted(range(1, len(seq) - 1), key=lambda j: abs(j - i)):
+                if j == i or seq[j].source == seq[i].source:
+                    continue
+                seq[i], seq[j] = seq[j], seq[i]
+                if not clash(i) and not clash(j):
+                    break
+                seq[i], seq[j] = seq[j], seq[i]
+        middle = seq[1:-1]
     return [opener, *middle, closer]
