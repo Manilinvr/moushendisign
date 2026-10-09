@@ -87,10 +87,12 @@ def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.
         graph.append(f"[{cur}]{fit}[zc]")
     cur = "zc"
     cap = edit.get("caption")
-    if cap:   # подпись снизу по центру; если в это время ещё висит плашка — сверху
+    if cap:   # подпись снизу по центру; сверху — если ещё висит плашка или лицо в зуме внизу кадра
         c0, c1, png = cap
         ci = add_input("-loop", "1", "-framerate", fps, "-t", f"{dur:.3f}", "-i", png)
-        top = card and c0 < s.lower_third + 0.4
+        # кадр зума упёрся в низ (маленькая вебка в углу) — лицо ниже середины, подпись его закроет
+        low_face = bool(zoom) and zoom[2][1] + zoom[2][3] >= v["height"] * 0.96
+        top = (card and c0 < s.lower_third + 0.4) or low_face
         y = f"{H * 0.13:.0f}-h/2" if top else f"{H * 0.80:.0f}-h/2"
         graph.append(f"[{cur}][{ci}:v]overlay=x=(W-w)/2:y={y}:enable='between(t,{c0:.2f},{c1:.2f})'[cv]")
         cur = "cv"
