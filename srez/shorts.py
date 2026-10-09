@@ -11,6 +11,7 @@
     layout = "face"       # face — кадр 9:16 по лицу (живая камера); split — вебка сверху, игра снизу; fit — кадр целиком
     parts = [["vypusk-02", "vod2895984355-05", 18.0, 50.0]]   # куски: проект, клип, с какой по какую секунду клипа
     # face_x = 0.3        # если в кадре несколько лиц — какое брать (доля ширины кадра)
+    # crop = [0.3, 0.5, 1.0]   # face: кадр вручную — центр x, центр y, высота (доли кадра), если лицо не ловится
     # game_x = 0.5        # split: центр игры по ширине кадра
     # cam = [0, 0.55, 0.16, 0.27]   # split: вебка вручную (доли кадра), если лицо не находится
     # drop = ["returned"]          # слова, которые распознались мусором, — убрать из субтитров
@@ -21,6 +22,7 @@
 """
 import hashlib
 import json
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -63,6 +65,17 @@ def _black_font(folder: Path) -> Path:
 
 # ---------------------------------------------------------------- куски и вырезка пауз
 
+def _merge_hyphens(words):
+    """«Ха -ха -ха», «теперь -то», «уй -ё -бищ» распознаются кусками — склеиваем в одно слово."""
+    out = []
+    for a, b, wd in words:
+        if out and wd.strip().startswith("-") and a - out[-1][1] < 0.6:
+            out[-1] = (out[-1][0], b, out[-1][2].rstrip() + wd.strip())
+        else:
+            out.append((a, b, wd))
+    return out
+
+
 def _part(spec_part, cache):
     ep, mid, a, b = spec_part
     if ep not in cache:
@@ -73,10 +86,11 @@ def _part(spec_part, cache):
     src, off = _source_media(p, m, p.work / "render")
     cc = json.loads((p.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json").read_text(encoding="utf-8"))
     info = data["sources"][m.source]
+    words = _merge_hyphens([tuple(x) for x in cc["words"]])
     bleeps = [tuple(x) for x in cc["spans"]]
-    bleeps += [(max(0.0, x - censor.PAD_BEFORE), y + censor.PAD_AFTER) for x, y, t in cc["words"] if censor.is_bad(t)]
+    bleeps += [(max(0.0, x - censor.PAD_BEFORE), y + censor.PAD_AFTER) for x, y, t in words if censor.is_bad(t)]
     return {"p": p, "m": m, "src": src, "off": off, "a": float(a), "b": float(b), "masks": masks[m.source],
-            "bleeps": sorted(bleeps), "words": [tuple(x) for x in cc["words"]],
+            "bleeps": sorted(bleeps), "words": words,
             "name": info["name"], "login": info.get("login")}
 
 
@@ -171,10 +185,22 @@ def _title_png(text, credit, out: Path, boxed=True):
     k = 1.0
     f = plates.font(int(58 * k), 900)
     fc = plates.font(int(30 * k), 600)
-    words = text.split()
+    words, hot = [], False                              # слова как куски (текст, на плашке)
+    for w in text.split():
+        segs, cur_t = [], ""
+        for c in w:
+            if c in "[]":
+                if cur_t:
+                    segs.append((cur_t, hot))
+                cur_t, hot = "", c == "["
+            else:
+                cur_t += c
+        if cur_t:
+            segs.append((cur_t, hot))
+        words.append(segs)
     lines, cur = [], []
     for wd in words:                                    # перенос по ширине
-        trial = " ".join(cur + [wd]).replace("[", "").replace("]", "")
+        trial = " ".join("".join(t for t, _ in x) for x in cur + [wd])
         if cur and f.getlength(trial) > W - 160:
             lines.append(cur)
             cur = [wd]
@@ -189,18 +215,31 @@ def _title_png(text, credit, out: Path, boxed=True):
         d.rounded_rectangle((40, 0, W - 40, h), radius=34, fill=plates.INK + (225,))
     y = 20 + lh // 2
     for ln in lines:
-        parts = [(w.strip("[]"), w.startswith("[")) for w in ln]
-        total = sum(f.getlength(t) for t, _ in parts) + f.getlength(" ") * (len(parts) - 1)
+        parts = []                                      # (текст, на плашке, пробел перед)
+        for wi, segs in enumerate(ln):
+            for si, (t, hot) in enumerate(segs):
+                sp = wi > 0 and si == 0
+                if hot and sp and parts and parts[-1][1]:   # несколько слов в [скобках] — одна плашка
+                    parts[-1] = (parts[-1][0] + " " + t, True, parts[-1][2])
+                else:
+                    parts.append((t, hot, sp))
+        pad = 16                                        # отступ текста от края плашки
+        total = sum(f.getlength(t) + (2 * pad + (lh - 6) * plates.SLANT * 0.7 if hot else 0)
+                    for t, hot, _ in parts) + \
+            f.getlength(" ") * sum(1 for *_, sp in parts if sp)
         x = (W - total) / 2
-        for t, hot in parts:
+        for t, hot, sp in parts:
+            if sp:
+                x += f.getlength(" ")
             tw = f.getlength(t)
             if hot:
-                plate = plates._slanted(int(tw + 28), lh - 6, plates.LIME + (255,))
-                im.alpha_composite(plate, (int(x - 14), int(y - (lh - 6) / 2)))
-                d.text((x, y), t, font=f, fill=plates.INK, anchor="lm")
+                plate = plates._slanted(int(tw + 2 * pad), lh - 6, plates.LIME + (255,))
+                im.alpha_composite(plate, (int(x), int(y - (lh - 6) / 2)))
+                d.text((x + pad, y), t, font=f, fill=plates.INK, anchor="lm")
+                x += tw + 2 * pad + (lh - 6) * plates.SLANT * 0.7   # косой край плашки
             else:
                 d.text((x, y), t, font=f, fill=plates.WHITE, anchor="lm")
-            x += tw + f.getlength(" ")
+                x += tw
         y += lh
     d.ellipse((W / 2 - fc.getlength(credit) / 2 - 26, y + 4, W / 2 - fc.getlength(credit) / 2 - 12, y + 18),
               fill=plates.LIME)
@@ -329,6 +368,12 @@ def build(sh: dict, out_dir: Path, log=print):
         cw = min(1920, ch * W / vh)
         cy0 = int(min(max(fy - ch * 0.36, 0), 1080 - ch)) // 2 * 2
         xe = _path_expr([(tt, cx - cw / 2) for tt, cx, cy, fh_ in faces], dur, 0, 1920 - cw)
+        if sh.get("crop"):                      # кадр вручную: центр x, центр y и высота (доли кадра)
+            mx, my, mh = sh["crop"]
+            ch = min(1080, mh * 1080)
+            cw = min(1920, ch * W / vh)
+            cy0 = int(min(max(my * 1080 - ch / 2, 0), 1080 - ch)) // 2 * 2
+            xe = f"{min(max(mx * 1920 - cw / 2, 0), 1920 - cw):.0f}"
         g += [f"[0:v]crop={int(cw) // 2 * 2}:{int(ch) // 2 * 2}:'{xe}':{cy0},scale={W}:{vh}:flags=lanczos,setsar=1[fv]",
               f"color=c=0x0C0C0E:s={W}x{H}:r={FPS}:d={dur:.3f}[bg]",
               f"[bg][fv]overlay=0:{band},drawbox=x=0:y={band - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
@@ -386,13 +431,6 @@ def build(sh: dict, out_dir: Path, log=print):
     if lay in ("split", "face"):
         title_y = max(0, (band - th) // 2)
     font = _black_font(assets / "fonts")
-    merged = []                                         # «Ха -ха -ха», «теперь -то» — одним словом
-    for a, b, wd in words:
-        if merged and wd.strip().startswith("-") and a - merged[-1][1] < 0.6:
-            merged[-1] = (merged[-1][0], b, merged[-1][2].rstrip() + wd.strip())
-        else:
-            merged.append((a, b, wd))
-    words = merged
     drop = {w.lower() for w in sh.get("drop", [])}
     fix = {k.lower(): v for k, v in sh.get("fix", {}).items()}
     clean = []
