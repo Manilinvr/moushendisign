@@ -22,11 +22,53 @@ class Settings:
     fps: int = 30
     preset: str = "veryfast"     # пресет x264: быстрее — ultrafast, качественнее — medium
     crf: int = 20
-    plate_seconds: float = 2.2   # длительность плашки перед клипом
+    plate_seconds: float = 1.4   # длительность плашки перед клипом
+    mask_style: str = "blur"     # как закрывать рекламу: blur — размыть, fill — закрасить
     intro: bool = False          # короткая заставка с логотипом в начале
     outro_seconds: float = 12    # финальная заставка под конечные элементы YouTube
     followers_label: str = "фолловеров на Twitch"
     jobs: int = 0                # параллельных ffmpeg; 0 — по числу ядер
+
+
+@dataclass
+class Mask:
+    """Прямоугольник, который нужно закрыть (реклама, баннер, QR-код).
+
+    box — x, y, ширина, высота в долях кадра (0…1); start/end — секунды стрима,
+    в которые баннер висит на экране (None — весь стрим).
+    """
+    box: tuple[float, float, float, float]
+    start: float | None = None
+    end: float | None = None
+
+    def active(self, a: float, b: float) -> bool:
+        return (self.start is None or self.start < b) and (self.end is None or self.end > a)
+
+
+def parse_time(v) -> float | None:
+    """«1:20:05», «20:05» или число секунд."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    sec = 0.0
+    for part in str(v).split(":"):
+        sec = sec * 60 + float(part)
+    return sec
+
+
+def parse_masks(items) -> list[Mask]:
+    out = []
+    for it in items or []:
+        if isinstance(it, dict):
+            out.append(Mask(tuple(it["box"]), parse_time(it.get("from")), parse_time(it.get("to"))))
+        else:
+            out.append(Mask(tuple(it)))
+    for m in out:
+        x, y, w, h = m.box
+        if not (0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 and 0 < h <= 1):
+            raise ValueError(f"Маска {m.box}: координаты должны быть долями кадра от 0 до 1")
+    return out
 
 
 @dataclass
@@ -42,6 +84,7 @@ class Source:
     platform: str = "Twitch"
     title: str | None = None          # название трансляции (для описания)
     vod_url: str | None = None
+    masks: list[Mask] = field(default_factory=list)
 
 
 @dataclass
@@ -102,7 +145,7 @@ def load(path: str | Path) -> Project:
             id=sid, url=url, file=file, chat=rel(s.get("chat")),
             twitch=(s.get("twitch") or "").lower() or None, name=s.get("name"),
             followers=s.get("followers"), avatar=rel(s.get("avatar")),
-            platform=s.get("platform", "Twitch"), vod_url=url,
+            platform=s.get("platform", "Twitch"), vod_url=url, masks=parse_masks(s.get("masks")),
         ))
     if not sources:
         raise ValueError("В проекте нет ни одного [[stream]]")

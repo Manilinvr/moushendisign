@@ -1,9 +1,10 @@
 """Сборка ролика: клипы, плашки стримеров, концовка, склейка, таймкоды."""
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import fetch, plates
-from .media import cpu_count, duration, ffmpeg, frame, has_audio
+from .media import cpu_count, duration, ffmpeg, frame, probe
 
 AENC_PCM = ["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"]
 
@@ -13,21 +14,58 @@ def _venc(s, threads):
             "-r", str(s.fps), "-g", str(s.fps * 2), "-threads", str(threads)]
 
 
-def encode_clip(src, offset, dur, out: Path, s, threads):
+def _even(v):
+    return max(2, int(v) // 2 * 2)
+
+
+def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur"):
+    """Цепочка filter_complex, закрывающая рекламу. Возвращает (фильтры, метка выхода)."""
+    act = [m for m in masks if m.active(clip_start, clip_start + dur)]
+    if not act:
+        return [], "0:v"
+    out, cur = [], "0:v"
+    if style != "fill":
+        out.append(f"[0:v]split={len(act) + 1}[mb]" + "".join(f"[mc{i}]" for i in range(len(act))))
+        cur = "mb"
+    for i, m in enumerate(act):
+        x, y, w, h = m.box
+        px, py = _even(x * src_w) if x > 0 else 0, _even(y * src_h) if y > 0 else 0
+        pw, ph = _even(min(w, 1 - x) * src_w), _even(min(h, 1 - y) * src_h)
+        pw, ph = min(pw, src_w - px), min(ph, src_h - py)
+        en = ""
+        if m.start is not None or m.end is not None:
+            a = m.start - clip_start if m.start is not None else -1
+            b = m.end - clip_start if m.end is not None else dur + 1
+            en = f":enable='between(t,{a:.2f},{b:.2f})'"
+        if style == "fill":
+            out.append(f"[{cur}]drawbox=x={px}:y={py}:w={pw}:h={ph}:color=0x0C0C0E:t=fill{en}[mv{i}]")
+        else:
+            sigma = max(12, min(pw, ph) // 4)
+            out.append(f"[mc{i}]crop={pw}:{ph}:{px}:{py},gblur=sigma={sigma}:steps=3,"
+                       f"eq=brightness=-0.06[mk{i}]")
+            out.append(f"[{cur}][mk{i}]overlay={px}:{py}{en}[mv{i}]")
+        cur = f"mv{i}"
+    return out, cur
+
+
+def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.0):
     W, H = s.width, s.height
-    vf = (f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,"
-          f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0E,setsar=1,fps={s.fps},"
-          f"fade=t=in:st=0:d=0.15")
-    af = ("loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,"
-          f"afade=t=in:d=0.12,afade=t=out:st={max(0, dur - 0.3):.2f}:d=0.3")
+    info = probe(src)
+    v = next(x for x in info["streams"] if x["codec_type"] == "video")
+    graph, cur = mask_filters(masks, clip_start, dur, v["width"], v["height"], s.mask_style)
+    graph.append(f"[{cur}]scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                 f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0E,setsar=1,fps={s.fps},"
+                 f"fade=t=in:st=0:d=0.12[v]")
+    audio = any(x["codec_type"] == "audio" for x in info["streams"])
+    if audio:
+        graph.append("[0:a:0]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,"
+                     f"afade=t=in:d=0.1,afade=t=out:st={max(0, dur - 0.25):.2f}:d=0.25[a]")
     tmp = out.with_name(out.stem + ".tmp.mkv")
     inp = ["-ss", f"{offset:.3f}", "-t", f"{dur:.3f}", "-i", src]
-    if has_audio(src):
-        ffmpeg(*inp, "-map", "0:v:0", "-map", "0:a:0", "-vf", vf, "-af", af,
-               *_venc(s, threads), *AENC_PCM, tmp)
-    else:
-        ffmpeg(*inp, "-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo",
-               "-map", "0:v:0", "-map", "1:a", "-vf", vf, *_venc(s, threads), *AENC_PCM, "-shortest", tmp)
+    if not audio:
+        inp += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
+    ffmpeg(*inp, "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]" if audio else "1:a",
+           *_venc(s, threads), *AENC_PCM, "-shortest", tmp)
     tmp.replace(out)
 
 
@@ -38,10 +76,10 @@ def plate_video(bg, card, out: Path, s, threads):
     bg.save(bg_png)
     card.save(card_png)
     fc = (f"[0:v]fps={s.fps},format=yuv420p[bg];"
-          "[1:v]format=rgba,fade=t=in:st=0:d=0.25:alpha=1[c];"
-          f"[bg][c]overlay=x=0:y='{int(70 * k)}*pow(1-min(t/0.4,1),3)',format=yuv420p[v];"
+          "[1:v]format=rgba,fade=t=in:st=0:d=0.12:alpha=1[c];"
+          f"[bg][c]overlay=x=0:y='{int(60 * k)}*pow(1-min(t/0.22,1),3)',format=yuv420p[v];"
           "[2:a]highpass=f=500,lowpass=f=6000,volume=0.5,"
-          "afade=t=in:d=0.1,afade=t=out:st=0.12:d=0.5,"
+          "afade=t=in:d=0.06,afade=t=out:st=0.08:d=0.3,"
           f"apad,atrim=0:{d},aformat=sample_rates=48000:channel_layouts=stereo[a]")
     ffmpeg("-loop", "1", "-framerate", s.fps, "-t", d, "-i", bg_png,
            "-loop", "1", "-framerate", s.fps, "-t", d, "-i", card_png,
@@ -85,6 +123,55 @@ def _tc(sec):
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
+MASKS = "masks.json"
+
+
+def load_masks(project):
+    """Маски из проекта плюс work/<проект>/masks.json (его удобно править после проверки)."""
+    import json
+    from .project import parse_masks
+    extra = {}
+    f = project.work / MASKS
+    if f.exists():
+        extra = json.loads(f.read_text(encoding="utf-8"))
+    return {src.id: src.masks + parse_masks(extra.get(src.id)) for src in project.sources}
+
+
+def _source_media(project, m, w):
+    """Файл с моментом и смещение начала момента в нём (для ссылок — скачанный кусок)."""
+    src = next(x for x in project.sources if x.id == m.source)
+    if src.file:
+        return src.file, m.start
+    tag = f"{m.start:.1f}-{m.end:.1f}"
+    return fetch.section(src.url, m.start, m.end, w / f"src_{m.id}_{tag}.mp4", project.settings.height)
+
+
+def prepare(project, moments, log=print):
+    """Скачивает куски видео и собирает листы проверки рекламы по каждому стримеру."""
+    from . import layout
+    w = project.work / "render"
+    w.mkdir(parents=True, exist_ok=True)
+    log(f"Готовлю видео для {len(moments)} моментов…")
+    with ThreadPoolExecutor(4) as ex:
+        media = dict(zip([m.id for m in moments], ex.map(lambda m: _source_media(project, m, w), moments)))
+    masks = load_masks(project)
+    sheets = project.work / "layouts"
+    sheets.mkdir(exist_ok=True)
+    for src in project.sources:
+        ms = [m for m in moments if m.source == src.id]
+        if not ms:
+            continue
+        if src.file:  # кадры равномерно по всему стриму
+            total = duration(src.file)
+            items = [(src.file, total * (i + 0.5) / 9) for i in range(9)]
+        else:         # кадры из скачанных кусков
+            items = [(media[m.id][0], media[m.id][1] + m.length * k) for m in ms for k in (0.2, 0.5, 0.8)]
+            items = items[:: max(1, len(items) // 9)][:9]
+        out, sugg = layout.sheet(items, masks[src.id], sheets / f"{src.id}.jpg")
+        log(f"  {src.id}: лист проверки {out.name}, кандидатов в рекламу: {len(sugg)}")
+    return media
+
+
 def render(project, moments, meta, log=print):
     s = project.settings
     W, H = s.width, s.height
@@ -93,19 +180,19 @@ def render(project, moments, meta, log=print):
     project.out.mkdir(parents=True, exist_ok=True)
     jobs = s.jobs or max(1, cpu_count() // 2)
     threads = max(1, cpu_count() // jobs)
-    srcs = {x.id: x for x in project.sources}
+    masks = load_masks(project)
 
     def build(item):
         i, m = item
-        src, info = srcs[m.source], meta[m.source]
-        tag = f"{m.start:.1f}-{m.end:.1f}"
-        clip = w / f"clip_{m.id}_{tag}.mkv"
+        info = meta[m.source]
+        mk = [x for x in masks[m.source] if x.active(m.start, m.end)]
+        key = f"{m.start:.1f}-{m.end:.1f}"
+        if mk:  # другие маски — другой файл, чтобы не взять старый клип из кэша
+            key += "_m" + hashlib.md5(repr((s.mask_style, mk)).encode()).hexdigest()[:8]
+        clip = w / f"clip_{m.id}_{key}.mkv"
         if not clip.exists():
-            if src.file:
-                path, off = src.file, m.start
-            else:
-                path, off = fetch.section(src.url, m.start, m.end, w / f"src_{m.id}_{tag}.mp4", s.height)
-            encode_clip(path, off, m.length, clip, s, threads)
+            path, off = _source_media(project, m, w)
+            encode_clip(path, off, m.length, clip, s, threads, masks=mk, clip_start=m.start)
         fr = frame(clip, 0.5, w / f"frame_{m.id}.jpg", width=W // 2)
         card = plates.streamer_card(
             W, H, name=info["name"], login=info.get("login"), followers=info.get("followers"),
