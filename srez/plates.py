@@ -220,16 +220,26 @@ def lower_third(W, *, name, login, followers, title=None, avatar=None, platform=
 
 
 def caption(W, text) -> Image.Image:
-    """Подпись-реакция: крупно белым с обводкой, последнее слово — на лаймовой плашке."""
+    """Подпись-реакция: крупно белым с обводкой, последнее слово — на лаймовой плашке.
+    Длинная подпись сначала уменьшается, слова отбрасываются только если не влезает и мелким шрифтом."""
     k = W / 1920
-    f = font(int(88 * k), 900)
     words = text.split()
-    gap, padx, ph = int(24 * k), int(18 * k), int(116 * k)
-    widths = [int(f.getlength(w)) for w in words]
-    total = sum(widths) + gap * (len(words) - 1) + padx * 2 + int(ph * SLANT)
-    while total > W * 0.92 and len(words) > 1:     # слишком длинно — оставляем последние слова
-        words, widths = words[1:], widths[1:]
-        total = sum(widths) + gap * (len(words) - 1) + padx * 2 + int(ph * SLANT)
+    gap, padx = int(24 * k), int(18 * k)
+
+    def layout(size, ws):
+        f = font(size, 900)
+        ph = int(size * 1.32)
+        widths = [int(f.getlength(w)) for w in ws]
+        return f, ph, widths, sum(widths) + gap * (len(ws) - 1) + padx * 2 + int(ph * SLANT)
+
+    size = int(88 * k)
+    f, ph, widths, total = layout(size, words)
+    while total > W * 0.9 and size > int(60 * k):
+        size -= int(4 * k) or 1
+        f, ph, widths, total = layout(size, words)
+    while total > W * 0.9 and len(words) > 1:     # всё равно не влезает — оставляем последние слова
+        words = words[1:]
+        f, ph, widths, total = layout(size, words)
     im = Image.new("RGBA", (total + int(20 * k), ph + int(20 * k)), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     x, y = int(10 * k), im.height // 2
@@ -238,7 +248,7 @@ def caption(W, text) -> Image.Image:
             im.alpha_composite(_slanted(ww + padx * 2, ph, LIME + (255,)), (x, y - ph // 2 + int(4 * k)))
             d.text((x + padx, y), w, font=f, fill=INK, anchor="lm")
         else:
-            d.text((x, y), w, font=f, fill=WHITE, anchor="lm", stroke_width=int(9 * k), stroke_fill=INK)
+            d.text((x, y), w, font=f, fill=WHITE, anchor="lm", stroke_width=max(2, size // 10), stroke_fill=INK)
             x += ww + gap
     return im
 
