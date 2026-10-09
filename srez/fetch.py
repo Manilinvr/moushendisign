@@ -5,11 +5,18 @@
 вокруг выбранных моментов.
 """
 import json
+import os
 from pathlib import Path
 
 from .media import ToolError, run
 
 PAD = 6  # запас по краям куска, сек
+
+
+def _proxy():
+    """Куски видео качает ffmpeg, а он прокси из окружения сам не берёт — передаём явно."""
+    p = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    return ["--proxy", p] if p else []
 
 
 def info(url: str) -> dict:
@@ -35,7 +42,7 @@ def section(url: str, start: float, end: float, out: Path, height: int = 1080) -
     a, b = max(0.0, start - PAD), end + PAD
     fmt = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
     try:
-        run(["yt-dlp", "--no-warnings", "-N", "8", "-f", fmt, "--download-sections", f"*{a:.2f}-{b:.2f}",
+        run(["yt-dlp", "--no-warnings", *_proxy(), "-N", "8", "-f", fmt, "--download-sections", f"*{a:.2f}-{b:.2f}",
              "--merge-output-format", "mp4", "-o", str(out), url])
     except ToolError:
         out.unlink(missing_ok=True)

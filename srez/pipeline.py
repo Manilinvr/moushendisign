@@ -35,7 +35,8 @@ def streamer_meta(src, sw, log):
         try:
             info = twitch.user_info(src.twitch)
             _save(cache, info)
-            log(f"  {info['name']}: {info['followers']:,} фолловеров".replace(",", " "))
+            fol = f"{info['followers']:,}".replace(",", " ") if info["followers"] is not None else "?"
+            log(f"  {info['name']}: {fol} фолловеров")
         except Exception as e:  # сеть, Twitch недоступен — не повод останавливаться
             log(f"  ! Не удалось получить данные канала {src.twitch} с Twitch: {e}")
             return meta
