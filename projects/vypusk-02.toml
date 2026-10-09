@@ -6,21 +6,38 @@ censor = "beep"         # аудитория — подростки: мат за
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2895984355"
+# RavshanN: BetBoom и «фрибет» справа сверху; вебка слева внизу — плашка справа
+masks = [[0.89, 0.0, 0.11, 0.33]]
+plate_side = "right"
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2895198615"
+# sasavot: промокоды слева внизу и справа сверху (в Доте и CS)
+masks = [[0.0, 0.66, 0.20, 0.30], [0.83, 0.07, 0.17, 0.30]]
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2895905440"
+# leva2k: «фрибет»/велотур слева сверху, ggsel справа сверху, кэшбэк справа внизу; слева внизу статистика тура — плашка справа
+masks = [[0.0, 0.0, 0.16, 0.16], [0.86, 0.0, 0.14, 0.09], [0.86, 0.79, 0.14, 0.17]]
+plate_side = "right"
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2896002981"
+# enzzai: промокоды и Winline в обоих нижних углах
+masks = [[0.0, 0.86, 0.15, 0.14], [0.84, 0.86, 0.16, 0.14]]
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2895957452"
+# ZLOYn: рекламы нет; вебка слева внизу — плашка справа
+plate_side = "right"
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2895336516"
+# Stray228: колонка с BetBoom/промокодом справа, «MINI PARTY» сверху; вебка слева внизу — плашка справа
+masks = [[0.84, 0.14, 0.16, 0.52], [0.79, 0.0, 0.19, 0.13]]
+plate_side = "right"
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2895857829"
+# StRoGo: Winline/промокод справа сверху и бонус справа посередине
+masks = [[0.80, 0.0, 0.20, 0.11], [0.85, 0.33, 0.15, 0.24]]
