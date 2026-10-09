@@ -22,6 +22,8 @@
     at = "5 кг"                          # с какой фразы начинается зум (ищется в распознанной речи)
     # zoom_at = 12.3                     # или точная секунда клипа; -1 — без зума
     # sfx = [["ding", 8.2]]              # звуки: whoosh, boom, ding, boing, logo
+    # from = "0:56:05"                   # точное начало/конец клипа во времени стрима
+    # to = "0:57:40"                     # (склеить соседние куски одной истории, обрезать лишнее)
 """
 import json
 import re
@@ -39,6 +41,16 @@ HOP = 0.5
 def _tc(sec):
     sec = int(sec)
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
+
+
+def _sec(tc):
+    """'1:02:03' или '62:03' или число → секунды."""
+    if isinstance(tc, (int, float)):
+        return float(tc)
+    sec = 0.0
+    for part in str(tc).split(":"):
+        sec = sec * 60 + float(part)
+    return sec
 
 
 # ---------------------------------------------------------------- расшифровки
@@ -133,8 +145,12 @@ def apply_picks(project, log=print):
         for i, m in enumerate(ms):
             lo = ms[i - 1]["end"] if i else 0
             hi = ms[i + 1]["start"] if i + 1 < len(ms) else total
-            s = _quiet_point(db, m["start"] - pad, -3, 2) if pad else m["start"]
-            e = _quiet_point(db, m["end"] + pad, -2, 3) if pad else m["end"]
+            p = picks[m["id"]]
+            if "from" in p:          # границы, заданные вручную, важнее автоматических
+                s = _sec(p["from"])
+            else:
+                s = _quiet_point(db, m["start"] - pad, -3, 2) if pad else m["start"]
+            e = _sec(p["to"]) if "to" in p else _quiet_point(db, m["end"] + pad, -2, 3) if pad else m["end"]
             m["start"], m["end"] = round(max(lo, s), 2), round(min(hi, e), 2)
     for key, score in (("opener", 100.0), ("closer", 99.0)):
         if cfg.get(key):
