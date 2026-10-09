@@ -167,18 +167,28 @@ def sting_video(a_img, b_img, out: Path, s, threads, sound):
     tmp.rmdir()
 
 
-def hook_video(pieces, out: Path, s, threads, music=None):
-    """Хук в начале ролика: несколько панчлайнов подряд под тихую музыку."""
+def hook_video(pieces, out: Path, s, threads, music=None, overlay=None):
+    """Хук в начале ролика: несколько панчлайнов подряд под тихую музыку.
+    overlay — картинка-предупреждение сверху на первые 4 секунды."""
     inp, graph, lab = [], [], ""
     for i, (clip, t, d) in enumerate(pieces):
         inp += ["-ss", f"{t:.3f}", "-t", f"{d:.3f}", "-i", clip]
         graph.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}];[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
         lab += f"[v{i}][a{i}]"
     total = sum(d for _, _, d in pieces)
-    graph.append(f"{lab}concat=n={len(pieces)}:v=1:a=1[v][hc]")
+    graph.append(f"{lab}concat=n={len(pieces)}:v=1:a=1[hv][hc]")
+    n = len(pieces)
+    if overlay:
+        inp += ["-loop", "1", "-framerate", s.fps, "-t", f"{total:.3f}", "-i", overlay]
+        top = int(44 * s.width / 1920)
+        graph.append(f"[{n}:v]format=rgba,fade=t=in:st=0:d=0.3:alpha=1,fade=t=out:st=3.6:d=0.4:alpha=1[dc];"
+                     f"[hv][dc]overlay=x=(W-w)/2:y={top}:enable='lt(t,4)'[v]")
+        n += 1
+    else:
+        graph.append("[hv]null[v]")
     if music:
         inp += ["-ss", "8", "-t", f"{total:.3f}", "-i", music]
-        graph.append(f"[{len(pieces)}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=0.22,"
+        graph.append(f"[{n}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=0.22,"
                      f"afade=t=in:d=0.2,afade=t=out:st={max(0, total - 0.3):.2f}:d=0.3[mb];"
                      "[hc][mb]amix=inputs=2:normalize=0:duration=first,"
                      "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[a]")
@@ -403,13 +413,25 @@ def render(project, moments, meta, log=print):
             best = [built[i] for _, i in cand[:hook_n]]
             if best:
                 hook = w / "hook.mkv"
+                warn = None
+                if s.disclaimer:
+                    warn = w / "disclaimer.png"
+                    plates.disclaimer(W, s.disclaimer).save(warn)
                 hook_video([(b["clip"], max(0.0, b["zoom"] - 0.35), 1.8) for b in best], hook, s, cpu_count(),
-                           music)
+                           music, warn)
                 parts.append(hook)
                 st = w / "sting_hook.mkv"
                 sting_video(edge(hook, True), edge(built[0]["clip"], False), st, s, cpu_count(),
                             sfx.path("logo", assets / "sfx"))
                 parts.append(st)
+        if s.disclaimer and not parts:   # хука нет — предупреждение отдельной короткой карточкой
+            from PIL import Image
+            card = Image.new("RGBA", (W, H), plates.INK + (255,))
+            warn = plates.disclaimer(W, s.disclaimer)
+            card.alpha_composite(warn, ((W - warn.width) // 2, (H - warn.height) // 2))
+            p = w / "disclaimer.mkv"
+            still_video(card, 2.0, p, s, cpu_count(), fade_in=0.2, fade_out=0.2)
+            parts.append(p)
         log("Переходы…")
         for i, b in enumerate(built):
             starts.append(len(parts))
@@ -456,7 +478,10 @@ def description(project, moments, meta, chapters, credit=""):
     for m in moments:
         if m.source not in used:
             used.append(m.source)
-    lines = [project.title, "", "Стримеры в выпуске:"]
+    lines = [project.title, ""]
+    if project.settings.disclaimer:
+        lines += [f"⚠️ {project.settings.disclaimer}.", ""]
+    lines += ["Стримеры в выпуске:"]
     for sid in used:
         i = meta[sid]
         link = f"https://twitch.tv/{i['login']}" if i.get("login") else ""

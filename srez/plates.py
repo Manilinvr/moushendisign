@@ -253,6 +253,20 @@ def caption(W, text) -> Image.Image:
     return im
 
 
+def disclaimer(W, text) -> Image.Image:
+    """Строка-предупреждение в начале ролика: тёмная плашка, лаймовая точка, белый текст."""
+    k = W / 1920
+    f = font(int(30 * k), 600)
+    h, pad, dot = int(64 * k), int(26 * k), int(14 * k)
+    w = int(pad * 2 + dot + 16 * k + f.getlength(text))
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((0, 0, w - 1, h - 1), radius=h // 2, fill=INK + (225,))
+    d.ellipse((pad, (h - dot) // 2, pad + dot, (h + dot) // 2), fill=LIME)
+    d.text((pad + dot + int(16 * k), h // 2), text, font=f, fill=WHITE, anchor="lm")
+    return im
+
+
 def sting_frame(a: Image.Image, b: Image.Image, t: float) -> Image.Image:
     """Кадр перехода (t от 0 до 1): лаймовый косой срез проходит по кадру, в середине — знак СРЕЗа."""
     W, H = a.size
