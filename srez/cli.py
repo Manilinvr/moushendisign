@@ -1,6 +1,9 @@
 """Командная строка нарезчика.
 
     python -m srez analyze проект.toml   найти моменты во всех стримах
+    python -m srez transcripts проект.toml   расшифровать лучших кандидатов (для ручного отбора)
+    python -m srez picks   проект.toml   применить отбор из проект.picks.toml (подписи, зумы)
+    python -m srez sheets  проект.toml   листы кадров выбранных клипов
     python -m srez prepare проект.toml   скачать нужные куски видео и найти рекламу на экране
     python -m srez render  проект.toml   смонтировать ролик из найденного
     python -m srez auto    проект.toml   всё сразу
@@ -12,6 +15,7 @@ import sys
 import time
 import urllib.request
 
+from . import editorial
 from . import project as proj
 from .moments import select
 from .pipeline import analyze, load_candidates
@@ -69,10 +73,12 @@ def cmd_check(_):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="srez", description="Нарезка лучших моментов стримов в один ролик")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("analyze", "prepare", "render", "auto"):
+    for name in ("analyze", "prepare", "render", "auto", "transcripts", "picks", "sheets"):
         sp = sub.add_parser(name)
         sp.add_argument("project", help="файл проекта .toml")
         sp.add_argument("--minutes", type=float, help="переопределить длину ролика")
+        if name == "transcripts":
+            sp.add_argument("--top", type=int, default=30, help="сколько лучших кандидатов каждого стрима")
     sub.add_parser("check")
     a = ap.parse_args(argv)
     if a.cmd == "check":
@@ -81,6 +87,12 @@ def main(argv=None):
     if a.minutes:
         p.settings.minutes = a.minutes
     t0 = time.time()
+    if a.cmd == "transcripts":
+        editorial.transcripts(p, a.top, log)
+    if a.cmd == "picks":
+        editorial.apply_picks(p, log)
+    if a.cmd == "sheets":
+        editorial.sheets(p, chosen_moments(p)[1], log)
     if a.cmd in ("analyze", "auto"):
         cmd_analyze(p)
     if a.cmd in ("prepare", "auto"):

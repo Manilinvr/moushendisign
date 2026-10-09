@@ -1,0 +1,26 @@
+# Выпуск №2: 7 стримов
+[video]
+title = "Топ Моменты Стримов | <хук выберу после отбора>"
+minutes = 25
+censor = "beep"         # аудитория — подростки: мат запикиваем
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2895984355"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2895198615"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2895905440"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2896002981"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2895957452"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2895336516"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2895857829"
