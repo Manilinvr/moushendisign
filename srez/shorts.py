@@ -386,6 +386,13 @@ def build(sh: dict, out_dir: Path, log=print):
     if lay in ("split", "face"):
         title_y = max(0, (band - th) // 2)
     font = _black_font(assets / "fonts")
+    merged = []                                         # «Ха -ха -ха», «теперь -то» — одним словом
+    for a, b, wd in words:
+        if merged and wd.strip().startswith("-") and a - merged[-1][1] < 0.6:
+            merged[-1] = (merged[-1][0], b, merged[-1][2].rstrip() + wd.strip())
+        else:
+            merged.append((a, b, wd))
+    words = merged
     drop = {w.lower() for w in sh.get("drop", [])}
     fix = {k.lower(): v for k, v in sh.get("fix", {}).items()}
     clean = []
