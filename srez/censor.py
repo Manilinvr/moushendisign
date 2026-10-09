@@ -4,6 +4,7 @@
 распознаётся только звук выбранных клипов, результат кэшируется.
 """
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -45,7 +46,7 @@ def _get_model():
     global _model
     if _model is None:
         from faster_whisper import WhisperModel
-        _model = WhisperModel(MODEL, device="cpu", compute_type="int8")
+        _model = WhisperModel(MODEL, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
     return _model
 
 
