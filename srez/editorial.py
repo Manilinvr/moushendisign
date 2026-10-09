@@ -22,6 +22,7 @@
     at = "5 кг"                          # с какой фразы начинается зум (ищется в распознанной речи)
     # zoom_at = 12.3                     # или точная секунда клипа; -1 — без зума
     # sfx = [["ding", 8.2]]              # звуки: whoosh, boom, ding, boing, logo
+    # hook = 1                           # панчлайн этого клипа — первый в хуке (2, 3 — следующие)
     # from = "0:56:05"                   # точное начало/конец клипа во времени стрима
     # to = "0:57:40"                     # (склеить соседние куски одной истории, обрезать лишнее)
 """
@@ -137,6 +138,7 @@ def apply_picks(project, log=print):
         m["caption"] = (p.get("caption") or "-") if p else ""
         m["sfx"] = p.get("sfx", []) if p else []
         m["zoom_at"] = p.get("zoom_at") if p else None
+        m["hook"] = int(p.get("hook", 0)) if p else 0
     # больше контекста по краям: режем по паузам, не залезая в соседний выбранный момент
     for sid in {m["source"] for m in data["moments"]}:
         db = np.load(project.work / sid / "loudness.npy")

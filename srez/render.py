@@ -409,8 +409,10 @@ def render(project, moments, meta, log=print):
 
         hook_n = min(s.hook, len(built))
         if hook_n:   # хук: самые сильные моменты с зумом (кроме первого и последнего клипа), по 1,8 с
-            cand = sorted((-moments[i].score, i) for i in range(1, len(built) - 1) if built[i]["zoom"] is not None)
-            best = [built[i] for _, i in cand[:hook_n]]
+            # сначала панчлайны, выбранные вручную (hook = 1, 2, 3 в файле отбора), затем самые сильные
+            cand = sorted((moments[i].hook or 99, -moments[i].score, i) for i in range(1, len(built) - 1)
+                          if built[i]["zoom"] is not None)
+            best = [built[i] for *_, i in cand[:hook_n]]
             if best:
                 hook = w / "hook.mkv"
                 warn = None

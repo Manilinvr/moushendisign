@@ -20,6 +20,7 @@ class Moment:
     zoom_at: float | None = None   # секунда клипа для зума на реакцию; None — сам найдёт, -1 — без зума
     caption: str = ""              # подпись-реакция; "" — из распознанной речи, "-" — без подписи
     sfx: list = field(default_factory=list)   # [["ding", 12.3], …] — звуки в секундах клипа
+    hook: int = 0                  # место панчлайна в хуке (1, 2, 3); 0 — хук выбирается по силе
 
     @property
     def length(self):
