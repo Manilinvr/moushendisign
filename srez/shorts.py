@@ -66,17 +66,6 @@ def _black_font(folder: Path) -> Path:
 
 # ---------------------------------------------------------------- куски и вырезка пауз
 
-def _merge_hyphens(words):
-    """«Ха -ха -ха», «теперь -то», «уй -ё -бищ» распознаются кусками — склеиваем в одно слово."""
-    out = []
-    for a, b, wd in words:
-        if out and wd.strip().startswith("-") and a - out[-1][1] < 0.6:
-            out[-1] = (out[-1][0], b, out[-1][2].rstrip() + wd.strip())
-        else:
-            out.append((a, b, wd))
-    return out
-
-
 def _part(spec_part, cache):
     ep, mid, a, b = spec_part
     if ep not in cache:
@@ -87,9 +76,8 @@ def _part(spec_part, cache):
     src, off = _source_media(p, m, p.work / "render")
     cc = json.loads((p.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json").read_text(encoding="utf-8"))
     info = data["sources"][m.source]
-    words = _merge_hyphens([tuple(x) for x in cc["words"]])
-    bleeps = [tuple(x) for x in cc["spans"]]
-    bleeps += [(max(0.0, x - censor.PAD_BEFORE), y + censor.PAD_AFTER) for x, y, t in words if censor.is_bad(t)]
+    words = censor.merge_hyphens([tuple(x) for x in cc["words"]])
+    bleeps = censor.bad_spans(words, m.length)
     return {"p": p, "m": m, "src": src, "off": off, "a": float(a), "b": float(b), "masks": masks[m.source],
             "bleeps": sorted(bleeps), "words": words,
             "name": info["name"], "login": info.get("login")}

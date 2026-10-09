@@ -58,22 +58,42 @@ def _pcm(path, start, dur) -> np.ndarray:
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768
 
 
-def spans(path, offset: float, dur: float, cache: Path) -> list[tuple[float, float]]:
-    """Отрезки мата (секунды от начала клипа) в куске [offset, offset + dur] файла path."""
-    if cache.exists():
-        return [tuple(x) for x in json.loads(cache.read_text(encoding="utf-8"))["spans"]]
-    segs, _ = _get_model().transcribe(_pcm(path, offset, dur), language="ru", beam_size=1, vad_filter=True,
-                                      word_timestamps=True, condition_on_previous_text=False)
-    words = [(float(w.start), float(w.end), w.word) for sg in segs for w in (sg.words or [])]
+def merge_hyphens(words):
+    """«Ха -ха -ха», «теперь -то», «уй -ё -бищ» распознаются кусками — склеиваем в одно слово."""
     out = []
-    for a, b, word in words:
+    for a, b, wd in words:
+        if out and wd.strip().startswith("-") and a - out[-1][1] < 0.6:
+            out[-1] = (out[-1][0], b, out[-1][2].rstrip() + wd.strip())
+        else:
+            out.append((a, b, wd))
+    return out
+
+
+def bad_spans(words, dur: float) -> list[tuple[float, float]]:
+    """Отрезки писка по словам (a, b, слово): мат с запасом, соседние отрезки сливаются."""
+    words = [tuple(w) for w in words]
+    out = []
+    for a, b, word in sorted(set(words) | set(merge_hyphens(words))):   # и куски, и склеенное слово
         if is_bad(word):
             a, b = max(0.0, a - PAD_BEFORE), min(dur, b + PAD_AFTER)
             if out and a <= out[-1][1]:
                 out[-1] = (out[-1][0], max(out[-1][1], b))
             else:
                 out.append((a, b))
-    out = [(round(float(a), 2), round(float(b), 2)) for a, b in out]
+    return [(round(float(a), 2), round(float(b), 2)) for a, b in out]
+
+
+def spans(path, offset: float, dur: float, cache: Path) -> list[tuple[float, float]]:
+    """Отрезки мата (секунды от начала клипа) в куске [offset, offset + dur] файла path.
+
+    В кэше хранятся распознанные слова; мат по ним считается заново каждый раз,
+    чтобы новые слова в списке мата доходили и до уже распознанных клипов."""
+    if cache.exists():
+        return bad_spans([tuple(w) for w in json.loads(cache.read_text(encoding="utf-8"))["words"]], dur)
+    segs, _ = _get_model().transcribe(_pcm(path, offset, dur), language="ru", beam_size=1, vad_filter=True,
+                                      word_timestamps=True, condition_on_previous_text=False)
+    words = [(float(w.start), float(w.end), w.word) for sg in segs for w in (sg.words or [])]
+    out = bad_spans(words, dur)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps({"spans": out, "words": [[round(a, 2), round(b, 2), w] for a, b, w in words]},
                                 ensure_ascii=False), encoding="utf-8")
