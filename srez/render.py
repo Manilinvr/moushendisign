@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import censor, edit, fetch, plates, sfx
-from .media import cpu_count, duration, ffmpeg, frame, probe
+from .media import cpu_count, duration, ffmpeg, frame, judder, probe, snap_tb
 
 AENC_PCM = ["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"]
 
@@ -19,14 +19,14 @@ def _even(v):
     return max(2, int(v) // 2 * 2)
 
 
-def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur"):
+def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur", src="0:v"):
     """Цепочка filter_complex, закрывающая рекламу. Возвращает (фильтры, метка выхода)."""
     act = [m for m in masks if m.active(clip_start, clip_start + dur)]
     if not act:
-        return [], "0:v"
-    out, cur = [], "0:v"
+        return [], src
+    out, cur = [], src
     if style != "fill":
-        out.append(f"[0:v]split={len(act) + 1}[mb]" + "".join(f"[mc{i}]" for i in range(len(act))))
+        out.append(f"[{src}]split={len(act) + 1}[mb]" + "".join(f"[mc{i}]" for i in range(len(act))))
         cur = "mb"
     for i, m in enumerate(act):
         x, y, w, h = m.box
@@ -68,7 +68,8 @@ def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.
         n_in += 1
         return n_in - 1
 
-    graph, cur = mask_filters(masks, clip_start, dur, v["width"], v["height"], s.mask_style)
+    graph, cur = mask_filters(masks, clip_start, dur, v["width"], v["height"], s.mask_style, src="sv0")
+    graph.insert(0, f"[0:v]{snap_tb(v)}[sv0]")     # кадры на сетку источника — иначе 60→30 к/с дёргается
     fit = (f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,"
            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0E,setsar=1,fps={fps}")
     zoom = edit.get("zoom")
@@ -474,6 +475,13 @@ def render(project, moments, meta, log=print):
     desc_path.write_text(desc, encoding="utf-8")
     log(f"Готово: {out} ({_tc(duration(out))})")
     log(f"Описание с таймкодами: {desc_path}")
+    log("Проверяю, не подвисает ли видео…")
+    share, spans = judder(out)
+    if spans:      # повторы кадров посреди движения — видео дёргается или «подвисает»
+        log(f"  ⚠ подвисает: {share:.1%} кадров повторяются, места: "
+            + ", ".join(f"{_tc(a)}–{_tc(b)}" for a, b in spans[:40]) + (" …" if len(spans) > 40 else ""))
+    else:
+        log("  подвисаний нет")
     return out, desc_path
 
 

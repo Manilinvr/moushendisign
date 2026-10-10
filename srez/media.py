@@ -45,3 +45,59 @@ def frame(path, t, out, width=None):
 
 def cpu_count() -> int:
     return max(1, os.cpu_count() or 1)
+
+
+def snap_tb(stream: dict) -> str:
+    """Фильтр: кадры источника ровно на его сетку (settb=1/частота кадров).
+
+    В стримах 60 к/с время кадров округлено до миллисекунд. Если не выровнять, переход
+    на 30 к/с иногда берёт один и тот же кадр дважды — картинка дёргается и «подвисает»."""
+    try:
+        num, den = (int(x) for x in stream.get("r_frame_rate", "0/1").split("/"))
+    except ValueError:
+        return "null"
+    if num <= 0 or den <= 0 or num / den > 240:
+        return "null"
+    return f"settb={den}/{num}"
+
+
+def judder(path, width=160, height=90) -> tuple[float, list[tuple[float, float]]]:
+    """Подвисания в готовом видео: кадр повторяется посреди движения (а не статичная сцена).
+
+    Возвращает (долю таких кадров, отрезки в секундах, где их много)."""
+    fps = 30.0
+    for s in probe(path)["streams"]:
+        if s["codec_type"] == "video":
+            n, d = (int(x) for x in s.get("avg_frame_rate", "30/1").split("/"))
+            fps = n / d if n and d else 30.0
+    import numpy as np
+    size = width * height
+    p = subprocess.Popen(["ffmpeg", "-v", "error", "-nostdin", "-i", str(path), "-vf",
+                          f"scale={width}:{height},format=gray", "-f", "rawvideo", "-"], stdout=subprocess.PIPE)
+    diffs, prev = [], None
+    while True:
+        buf = p.stdout.read(size)
+        if len(buf) < size:
+            break
+        cur = np.frombuffer(buf, np.uint8).astype(np.int16)
+        if prev is not None:
+            diffs.append(float(np.abs(cur - prev).mean()))
+        prev = cur
+    p.wait()
+    d = np.array(diffs)
+    if len(d) < 3:
+        return 0.0, []
+    same, moving = d < 0.12, d > 0.5
+    near = np.zeros_like(same)
+    near[1:] |= moving[:-1]
+    near[:-1] |= moving[1:]
+    bad = same & near                                  # повтор кадра рядом с движением
+    per_sec = np.add.reduceat(bad, np.arange(0, len(bad), int(round(fps))))
+    spans = []
+    for i, n in enumerate(per_sec):
+        if n >= 3:                                     # 3+ повтора за секунду уже видно глазом
+            if spans and spans[-1][1] == i:
+                spans[-1] = (spans[-1][0], i + 1)
+            else:
+                spans.append((i, i + 1))
+    return float(bad.mean()), [(float(a), float(b)) for a, b in spans]

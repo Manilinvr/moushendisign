@@ -32,12 +32,13 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from . import censor, edit, plates
-from .media import cpu_count, ffmpeg, probe
+from .media import cpu_count, ffmpeg, judder, probe, snap_tb
 from .moments import Moment
 from .project import load
 from .render import _source_media, load_masks, mask_filters
 
 W, H, FPS = 1080, 1920, 30
+SEG_VERSION = 2          # поменялась сборка кусков — поднять, чтобы старые куски из кэша не брались
 BAND = 210                      # split: полоса заголовка сверху; ниже вебка, под ней игра
 GAP = 0.45                      # паузы длиннее — вырезаются
 LIME_ASS, WHITE_ASS, INK_ASS = "&H0033FFC6&", "&H00F0F5F5&", "&H000E0C0C&"
@@ -100,7 +101,8 @@ def _segment(pt, a, b, out: Path):
     dur = b - a
     m = pt["m"]
     act = [x for x in pt["masks"] if x.active(m.start + a, m.start + b)]
-    graph, cur = mask_filters(act, m.start + a, dur, v["width"], v["height"])
+    graph, cur = mask_filters(act, m.start + a, dur, v["width"], v["height"], src="sv0")
+    graph.insert(0, f"[0:v]{snap_tb(v)}[sv0]")     # кадры на сетку источника — иначе 60→30 к/с дёргается
     graph.append(f"[{cur}]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
                  f"setsar=1,fps={FPS},format=yuv420p[v]")
     inp = ["-ss", f"{pt['off'] + a:.3f}", "-t", f"{dur:.3f}", "-i", str(pt["src"])]
@@ -320,7 +322,7 @@ def build(sh: dict, out_dir: Path, log=print):
     segs, words, t = [], [], 0.0
     for pi, pt in enumerate(parts):
         for si, (a, b) in enumerate(_intervals(pt)):
-            sig = hashlib.md5(repr(([x for x in pt["bleeps"] if x[1] > a and x[0] < b],
+            sig = hashlib.md5(repr((SEG_VERSION, [x for x in pt["bleeps"] if x[1] > a and x[0] < b],
                                     [x for x in pt["masks"] if x.active(pt["m"].start + a, pt["m"].start + b)]))
                               .encode()).hexdigest()[:8]           # другие маски или мат — другой файл
             seg = work / f"seg_{pi}_{si}_{a:.2f}-{b:.2f}_{sig}.mkv"
@@ -345,7 +347,7 @@ def build(sh: dict, out_dir: Path, log=print):
     if hint is None and sh.get("cam"):              # в split с рамкой вебки ищем лицо в ней
         hint = sh["cam"][0] + sh["cam"][2] / 2
     faces = _pick(_faces(src, dur, assets), hint) if lay in ("face", "split") else []
-    g = []
+    g = [f"[0:v]fps={FPS}[sv]"]      # склейка из кусков: время кадров ровно по 1/30 с
     if lay == "face":
         # сверху полоса с заголовком, под ней кадр по лицу: лицо примерно на трети высоты, не под заголовком
         vh = H - band
@@ -364,9 +366,8 @@ def build(sh: dict, out_dir: Path, log=print):
             cw = min(1920, ch * W / vh)
             cy0 = int(min(max(my * 1080 - ch / 2, 0), 1080 - ch)) // 2 * 2
             xe = f"{min(max(mx * 1920 - cw / 2, 0), 1920 - cw):.0f}"
-        g += [f"[0:v]crop={int(cw) // 2 * 2}:{int(ch) // 2 * 2}:'{xe}':{cy0},scale={W}:{vh}:flags=lanczos,setsar=1[fv]",
-              f"color=c=0x0C0C0E:s={W}x{H}:r={FPS}:d={dur:.3f}[bg]",
-              f"[bg][fv]overlay=0:{band},drawbox=x=0:y={band - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
+        g += [f"[sv]crop={int(cw) // 2 * 2}:{int(ch) // 2 * 2}:'{xe}':{cy0}:exact=1,scale={W}:{vh}:flags=lanczos,setsar=1,"
+              f"pad={W}:{H}:0:{band}:color=0x0C0C0E,drawbox=x=0:y={band - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
         title_y, sub_y = 0, band + int(vh * 0.66)
     elif lay == "split":
         fx = float(np.median([f[1] for f in faces])) if faces else None
@@ -403,16 +404,14 @@ def build(sh: dict, out_dir: Path, log=print):
             gcx = 960
         gx = int(min(max(gcx - gw / 2, 0), 1920 - gw)) // 2 * 2
         e = lambda v: int(v) // 2 * 2           # noqa: E731
-        g += [f"[0:v]split=2[c][gm]",
+        g += [f"[sv]split=2[c][gm]",
               f"[c]crop={e(cw)}:{e(ch)}:{e(cx0)}:{e(cy0)},scale={W}:{cam_h}:flags=lanczos,setsar=1[cv]",
               f"[gm]crop={gw}:1080:{gx}:0,scale={W}:{game_h}:flags=lanczos,setsar=1[gv]",
-              f"color=c=0x0C0C0E:s={W}x{H}:r={FPS}:d={dur:.3f}[bg]",
-              f"[bg][cv]overlay=0:{band}[b1]",
-              f"[b1][gv]overlay=0:{band + cam_h},drawbox=x=0:y={band + cam_h - 3}:w={W}:h=6:"
-              f"color=0xC6FF33:t=fill[base]"]
+              f"[cv][gv]vstack=inputs=2,pad={W}:{H}:0:{band}:color=0x0C0C0E,"
+              f"drawbox=x=0:y={band + cam_h - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
         title_y, sub_y = 0, band + cam_h
     else:   # fit
-        g += ["[0:v]split=2[b][f]",
+        g += ["[sv]split=2[b][f]",
               f"[b]scale=-2:{H},crop={W}:{H},boxblur=24:2,eq=brightness=-0.12,setsar=1[bb]",
               f"[f]scale={W}:-2,setsar=1[ff]",
               "[bb][ff]overlay=0:(H-h)/2-80[base]"]
@@ -443,6 +442,9 @@ def build(sh: dict, out_dir: Path, log=print):
            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-r", str(FPS),
            "-threads", str(cpu_count()), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
     note = "" if 14.5 <= dur <= 30.5 else f"  ⚠ длина {dur:.1f} с — вне 15–30 с"
+    share, spans = judder(out)
+    if spans:      # повторы кадров посреди движения — видео дёргается или «подвисает»
+        note += f"  ⚠ подвисает: {share:.0%} кадров повторяются, секунды " + ", ".join(f"{a:.0f}–{b:.0f}" for a, b in spans)
     log(f"  {name}: {dur:.1f} с, {lay}{note}")
     return out, dur
 
