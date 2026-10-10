@@ -150,22 +150,34 @@ def _pick(faces, hint_x=None):
     return res
 
 
-def _path_expr(points, dur, lo, hi):
-    """Плавная траектория x(t) кадра: сглаживание и выражение ffmpeg из отрезков по 0,5 с."""
+def _path_expr(points, dur, lo, hi, dead=80, move=0.4):
+    """Траектория x(t) кадра, как у оператора: кадр стоит, пока лицо рядом, а ушло дальше dead px —
+    быстрый плавный перевод за move с. Медленный дрейф нельзя: кадр сдвигается на целый пиксель
+    раз в несколько кадров, и на спокойной картинке это видно как рывки (кадры повторяются)."""
     if not points:
         return f"{(lo + hi) / 2:.0f}"
-    ts = np.arange(0, dur + 0.5, 0.5)
-    t0 = np.array([p[0] for p in points])
-    x0 = np.array([p[1] for p in points])
-    xs = np.interp(ts, t0, x0)
-    k = 3                                               # сглаживание ±1,5 с
-    xs = np.array([xs[max(0, i - k):i + k + 1].mean() for i in range(len(xs))])
-    xs = np.clip(xs, lo, hi)
+    ts = np.arange(0, dur + 0.25, 0.25)
+    xs = np.interp(ts, [p[0] for p in points], [p[1] for p in points])
+    k = 2                                               # убрать дрожь детектора: среднее ±0,5 с
+    xs = np.clip([xs[max(0, i - k):i + k + 1].mean() for i in range(len(xs))], lo, hi)
     if xs.max() - xs.min() < 60:                        # почти не двигается — стоим на месте
         return f"{np.median(xs):.0f}"
-    expr = f"{xs[-1]:.0f}"
-    for i in range(len(ts) - 2, -1, -1):
-        expr = (f"if(lt(t,{ts[i + 1]:.2f}),{xs[i]:.0f}+({xs[i + 1] - xs[i]:.0f})*(t-{ts[i]:.2f})/0.5,{expr})")
+    cur, busy, keys = float(xs[0]), -1.0, []
+    for t, x in zip(ts, xs):
+        if t < busy:
+            continue
+        if abs(x - cur) > dead:                         # лицо ушло — переводим туда, где оно будет
+            to = float(np.clip(np.interp(t + move, ts, xs), lo, hi))
+            keys.append((t, cur, to))
+            cur, busy = to, t + move
+    if not keys:
+        return f"{cur:.0f}"
+    expr = f"{cur:.0f}"
+    for i in range(len(keys) - 1, -1, -1):
+        t, x0, x1 = keys[i]
+        s_ = f"((t-{t:.2f})/{move})"
+        ease = f"{x0:.0f}+({x1 - x0:.0f})*{s_}*{s_}*(3-2*{s_})"
+        expr = f"if(lt(t,{t:.2f}),{x0:.0f},if(lt(t,{t + move:.2f}),{ease},{expr}))"
     return expr
 
 
