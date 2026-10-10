@@ -190,10 +190,11 @@ def _punches(sh, words, dur):
     return sorted(out, key=lambda p: p[0])
 
 
-def _shots(dur, cuts, punches, faces, base, area, follow=True, zoomcut=True):
+def _shots(dur, cuts, punches, faces, base, area, follow=True, zoomcut=True, room=2.6):
     """План камеры: [(начало, конец, (x, y, w, h), тряска)]. Камера не ездит за стримером:
     внутри плана кадр стоит, меняется только склейкой — на вырезанных паузах (через раз чуть ближе),
-    на резком зуме и когда лицо ушло к краю кадра. base = (x, y, w, h) общего плана, area — где можно резать."""
+    на резком зуме и когда лицо ушло к краю кадра. base = (x, y, w, h) общего плана, area — где можно резать;
+    room — во сколько раз план выше лица: крупное лицо (камера у лица) сильно не приближаем."""
     bx, by, bw, bh = base
     ax, ay, aw, ah = area
     bounds = sorted({0.0, dur, *[c for c in cuts if 0 < c < dur],
@@ -221,7 +222,11 @@ def _shots(dur, cuts, punches, faces, base, area, follow=True, zoomcut=True):
             z = pn[4]
             cx = z["x"] * 1920 if "x" in z else (fx if fx is not None else cur[0])
             cy = z["y"] * 1080 if "y" in z else fy
-            shots.append((a, b, box(cx, pn[2], cy), pn[3] and abs(a - pn[0]) < 1e-6))
+            scale = pn[2]
+            if near and "scale" not in z:                   # лицо и так крупное — только чуть ближе
+                fh = float(np.median([f[3] for f in near]))
+                scale = max(1.12, min(scale, bh / (room * fh)))
+            shots.append((a, b, box(cx, scale, cy), pn[3] and abs(a - pn[0]) < 1e-6))
             continue
         if follow and fx is not None and abs(fx - cur[0]) > 0.25 * bw:     # лицо у края — на склейке новый план
             cur = (fx, cur[1])
@@ -516,7 +521,8 @@ def build(sh: dict, out_dir: Path, log=print):
         e = lambda v: int(v) // 2 * 2           # noqa: E731
         seen = f"crop={e(cw)}:{e(ch)}:{e(cx0)}:{e(cy0)}"     # вебка — самое заметное
         inside = [f for f in faces if x <= f[1] <= x + w and y <= f[2] <= y + h]
-        shots = _shots(dur, [], punches, inside, (cx0, cy0, cw, ch), (x, y, w, h), follow=False, zoomcut=False)
+        shots = _shots(dur, [], punches, inside, (cx0, cy0, cw, ch), (x, y, w, h), follow=False, zoomcut=False,
+                       room=2.0)
         g += [f"[sv]split=2[c][gm]"]
         g += _shot_graph("c", shots, W, cam_h, "cv")
         g += [f"[gm]crop={gw}:1080:{gx}:0,scale={W}:{game_h}:flags=lanczos,setsar=1[gv]",
