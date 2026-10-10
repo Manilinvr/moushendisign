@@ -21,6 +21,12 @@ class Moment:
     caption: str = ""              # подпись-реакция; "" — из распознанной речи, "-" — без подписи
     sfx: list = field(default_factory=list)   # [["ding", 12.3], …] — звуки в секундах клипа
     hook: int = 0                  # место панчлайна в хуке (1, 2, 3); 0 — хук выбирается по силе
+    bleep: list = field(default_factory=list)  # [[начало, конец], …] — ручной писк, секунды стрима
+
+    def manual_bleeps(self):
+        """Ручной писк в секундах клипа (мат, который распознаватель не узнал)."""
+        return [(round(max(0.0, a - self.start), 2), round(min(self.length, b - self.start), 2))
+                for a, b in self.bleep if b > self.start and a < self.end]
 
     @property
     def length(self):

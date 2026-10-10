@@ -78,7 +78,7 @@ def _part(spec_part, cache):
     cc = json.loads((p.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json").read_text(encoding="utf-8"))
     info = data["sources"][m.source]
     words = censor.merge_hyphens([tuple(x) for x in cc["words"]])
-    bleeps = censor.bad_spans(words, m.length)
+    bleeps = censor.union(censor.cached_spans(cc, m.length), m.manual_bleeps())
     return {"p": p, "m": m, "src": src, "off": off, "a": float(a), "b": float(b), "masks": masks[m.source],
             "bleeps": sorted(bleeps), "words": words,
             "name": info["name"], "login": info.get("login")}

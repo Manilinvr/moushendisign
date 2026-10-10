@@ -317,7 +317,7 @@ def censor_spans(project, moments, log=print):
     for i, m in enumerate(moments, 1):
         path, off = _source_media(project, m, w)
         cache = project.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json"
-        out[m.id] = censor.spans(path, off, m.length, cache)
+        out[m.id] = censor.union(censor.spans(path, off, m.length, cache), m.manual_bleeps())
         if i % 10 == 0 or i == len(moments):
             log(f"  проверено {i}/{len(moments)}, запикать: {sum(len(v) for v in out.values())} слов")
     return out

@@ -23,8 +23,12 @@
     # zoom_at = 12.3                     # или точная секунда клипа; -1 — без зума
     # sfx = [["ding", 8.2]]              # звуки: whoosh, boom, ding, boing, logo
     # hook = 1                           # панчлайн этого клипа — первый в хуке (2, 3 — следующие)
+    # bleep = [["0:57:20.4", "0:57:21.1"]]  # ручной писк (время стрима): мат, который распознаватель не узнал
     # from = "0:56:05"                   # точное начало/конец клипа во времени стрима
     # to = "0:57:40"                     # (склеить соседние куски одной истории, обрезать лишнее)
+
+Свой момент, которого нет среди найденных по звуку (смешное в разговоре часто тихое): id вида
+«vod123-k01» (vod123 — id стрима) с from и to — момент создаётся сам.
 """
 import json
 import re
@@ -128,6 +132,12 @@ def apply_picks(project, log=print):
         orig.write_text(cpath.read_text(encoding="utf-8"), encoding="utf-8")
     data = json.loads(orig.read_text(encoding="utf-8"))
     by_id = {m["id"]: m for m in data["moments"]}
+    for k, p in picks.items():      # свой момент (нашёлся по расшифровке, а не по громкости): id «vodNNN-k01» + from/to
+        src = k.rsplit("-", 1)[0]
+        if k not in by_id and "from" in p and "to" in p and src in data["sources"]:
+            a, b = _sec(p["from"]), _sec(p["to"])
+            by_id[k] = {"id": k, "source": src, "start": a, "end": b, "peak": (a + b) / 2, "score": 50.0}
+            data["moments"].append(by_id[k])
     unknown = [k for k in picks if k not in by_id]
     if unknown:
         raise KeyError(f"В candidates.json нет моментов: {', '.join(unknown)}")
@@ -139,6 +149,7 @@ def apply_picks(project, log=print):
         m["sfx"] = p.get("sfx", []) if p else []
         m["zoom_at"] = p.get("zoom_at") if p else None
         m["hook"] = int(p.get("hook", 0)) if p else 0
+        m["bleep"] = [[_sec(a), _sec(b)] for a, b in p.get("bleep", [])] if p else []
     # больше контекста по краям: режем по паузам, не залезая в соседний выбранный момент
     for sid in {m["source"] for m in data["moments"]}:
         db = np.load(project.work / sid / "loudness.npy")
