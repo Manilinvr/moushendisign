@@ -57,8 +57,8 @@ def _detector(cache_dir: Path):
     return _det
 
 
-def zoom_box(img_path, cache_dir: Path):
-    """Кадр 16:9 вокруг самого крупного лица (в пикселях исходника) или None."""
+def zoom_box(img_path, cache_dir: Path, zmax=ZOOM_MAX):
+    """Кадр 16:9 вокруг самого крупного лица (в пикселях картинки) или None."""
     import cv2
     im = cv2.imread(str(img_path))
     if im is None:
@@ -72,7 +72,7 @@ def zoom_box(img_path, cache_dir: Path):
     if faces is None or not len(faces):
         return None
     fx, fy, fw, fh = (v / s for v in max(faces, key=lambda f: f[2] * f[3] * f[14])[:4])
-    bh = min(max(fh * 4.2, h0 / ZOOM_MAX), h0 / ZOOM_MIN)
+    bh = min(max(fh * 4.2, h0 / zmax), h0 / ZOOM_MIN)
     bw = bh * 16 / 9
     cx, cy = fx + fw / 2, fy + fh * 0.8
     margin = bw * 0.015                    # запас под тряску
@@ -153,8 +153,9 @@ def remap(t, keep):
 
 # ---------------------------------------------------------------- всё вместе
 
-def decide(m, path, offset, words, settings, cache: Path, assets: Path) -> dict:
-    """Решения для клипа m (время — от начала клипа)."""
+def decide(m, path, offset, words, settings, cache: Path, assets: Path, crop=None) -> dict:
+    """Решения для клипа m (время — от начала клипа). crop — кадрирование (x, y, w, h в пикселях исходника):
+    тогда рамка зума — в пикселях кадрированной картинки."""
     if cache.exists():
         d = json.loads(cache.read_text(encoding="utf-8"))
     else:
@@ -177,11 +178,17 @@ def decide(m, path, offset, words, settings, cache: Path, assets: Path) -> dict:
         tp = None if m.zoom_at < 0 else _snap(m.zoom_at)
     zoom = None
     if tp is not None and settings.zoom and m.length - 0.4 - tp >= 0.8:
-        key = f"{tp:.2f}"
+        key = f"{tp:.2f}" + ("@" + ",".join(map(str, crop)) if crop else "")
         if key not in d["boxes"]:        # лицо ищем в тот момент, где будет зум
             img = cache.with_suffix(".jpg")
             frame(path, offset + tp + 0.3, img)
-            d["boxes"][key] = zoom_box(img, assets)
+            zmax = ZOOM_MAX
+            if crop:                     # кадрирование уже увеличило картинку — зум меньше, чтобы не мылило
+                from PIL import Image
+                x, y, w, h = crop
+                Image.open(img).crop((x, y, x + w, y + h)).save(img)
+                zmax = max(ZOOM_MIN, min(ZOOM_MAX, 2.4 * h / settings.height))
+            d["boxes"][key] = zoom_box(img, assets, zmax)
         if d["boxes"][key]:
             zoom = (tp, _snap(min(tp + ZOOM_LEN, m.length - 0.4)), d["boxes"][key])
     cache.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")

@@ -49,8 +49,15 @@ def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur", src="0:v"):
     return out, cur
 
 
+def crop_px(box, src_w, src_h):
+    """Кадрирование (доли кадра) → x, y, w, h в пикселях исходника (чётные)."""
+    x, y, w, h = box
+    px, py = _even(x * src_w) if x > 0 else 0, _even(y * src_h) if y > 0 else 0
+    return px, py, min(_even(w * src_w), src_w - px), min(_even(h * src_h), src_h - py)
+
+
 def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.0, bleeps=(),
-                edit=None, card=None, side="left", assets=None):
+                edit=None, card=None, side="left", assets=None, crop=None):
     """Клип 1920×1080: реклама закрыта, мат запикан. В стиле sting ещё зум на реакцию с «бум»,
     подпись-реакция, вырезанные паузы и плашка стримера поверх первых секунд."""
     W, H, fps = s.width, s.height, s.fps
@@ -70,6 +77,10 @@ def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.
 
     graph, cur = mask_filters(masks, clip_start, dur, v["width"], v["height"], s.mask_style, src="sv0")
     graph.insert(0, f"[0:v]{snap_tb(v)}[sv0]")     # кадры на сетку источника — иначе 60→30 к/с дёргается
+    src_h = v["height"]
+    if crop:   # кадрирование: в ролик идёт только часть кадра (например, без чата поверх вебки)
+        graph.append(f"[{cur}]crop={crop[2]}:{crop[3]}:{crop[0]}:{crop[1]}[fr]")
+        cur, src_h = "fr", crop[3]
     fit = (f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,"
            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0E,setsar=1,fps={fps}")
     zoom = edit.get("zoom")
@@ -92,7 +103,7 @@ def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.
         c0, c1, png = cap
         ci = add_input("-loop", "1", "-framerate", fps, "-t", f"{dur:.3f}", "-i", png)
         # кадр зума упёрся в низ (маленькая вебка в углу) — лицо ниже середины, подпись его закроет
-        low_face = bool(zoom) and zoom[2][1] + zoom[2][3] >= v["height"] * 0.96
+        low_face = bool(zoom) and zoom[2][1] + zoom[2][3] >= src_h * 0.96
         top = (card and c0 < s.lower_third + 0.4) or low_face
         y = f"{H * 0.13:.0f}-h/2" if top else f"{H * 0.80:.0f}-h/2"
         graph.append(f"[{cur}][{ci}:v]overlay=x=(W-w)/2:y={y}:enable='between(t,{c0:.2f},{c1:.2f})'[cv]")
@@ -360,9 +371,15 @@ def render(project, moments, meta, log=print):
             key += "_b" + hashlib.md5(repr((s.censor, bl, censor.BLEEP_VERSION)).encode()).hexdigest()[:8]
         path, off = _source_media(project, m, w)
         ed, card, side = None, None, srcs[m.source].plate_side
+        fr = next((f for f in srcs[m.source].frames if f.active(m.start, m.end)), None)
+        crop = None
+        if fr:
+            sv = next(x for x in probe(path)["streams"] if x["codec_type"] == "video")
+            crop = crop_px(fr.box, sv["width"], sv["height"])
+            key += "_f" + "-".join(map(str, crop))
         if styled:
             ed = edit.decide(m, path, off, _speech(project, m, path, off), s,
-                             project.work / "edit" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json", assets)
+                             project.work / "edit" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json", assets, crop)
             if ed["caption"]:
                 c0, c1, text = ed["caption"]
                 png = w / f"cap_{m.id}_{hashlib.md5(text.encode()).hexdigest()[:8]}.png"
@@ -378,7 +395,7 @@ def render(project, moments, meta, log=print):
         clip = w / f"clip_{m.id}_{key}.mkv"
         if not clip.exists():
             encode_clip(path, off, m.length, clip, s, threads, masks=mk, clip_start=m.start, bleeps=bl,
-                        edit=ed, card=card, side=side, assets=assets)
+                        edit=ed, card=card, side=side, assets=assets, crop=crop)
         log(f"  готово {i + 1}/{len(moments)}: {info['name']} — {m.title or m.label}")
         if styled:
             z = ed["zoom"]

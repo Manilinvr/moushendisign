@@ -96,6 +96,7 @@ class Source:
     vod_url: str | None = None
     masks: list[Mask] = field(default_factory=list)
     plate_side: str = "left"          # где плашка стримера поверх клипа: left или right (если там вебка)
+    frames: list[Mask] = field(default_factory=list)   # кадрирование: в ролик идёт только эта часть кадра
 
 
 @dataclass
@@ -157,7 +158,7 @@ def load(path: str | Path) -> Project:
             twitch=(s.get("twitch") or "").lower() or None, name=s.get("name"),
             followers=s.get("followers"), avatar=rel(s.get("avatar")),
             platform=s.get("platform", "Twitch"), vod_url=url, masks=parse_masks(s.get("masks")),
-            plate_side=s.get("plate_side", "left"),
+            plate_side=s.get("plate_side", "left"), frames=parse_masks(s.get("frame")),
         ))
     if not sources:
         raise ValueError("В проекте нет ни одного [[stream]]")
