@@ -15,11 +15,16 @@
     # game_x = 0.5        # split: центр игры по ширине кадра
     # cam = [0, 0.55, 0.16, 0.27]   # split: вебка вручную (доли кадра), если лицо не находится
     # sub_y = 0.45         # где строка субтитров (доля высоты экрана), если по умолчанию она на лице
+    # zoom = ["никто не узнает", {at = "папа", scale = 1.7}, {t = 24.5, boom = false}]
+    #                      # резкий зум на лицо на панчлайне (фраза из субтитров или секунда шортса) с «бум» и тряской
+    # zoomcut = false      # face: не приближать план через склейку
     # drop = ["returned"]          # слова, которые распознались мусором, — убрать из субтитров
     # fix = { "лиску" = "Алиску" }   # исправить слово в субтитрах
 
 Берётся всё из выпуска: исходники клипов, маски рекламы, запикивание мата и распознанные слова.
 Паузы короче, чем в выпуске (шортс должен лететь), мат в субтитрах — звёздочками.
+Камера за стримером не ездит: план стоит, меняется только склейкой (на вырезанных паузах через раз
+чуть ближе), на панчлайнах — резкий зум на лицо с «бум»; если лицо ушло к краю — новый план склейкой.
 """
 import hashlib
 import json
@@ -31,7 +36,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from . import censor, edit, plates
+from . import censor, edit, plates, sfx
 from .media import cpu_count, ffmpeg, judder, probe, snap_tb
 from .moments import Moment
 from .project import load
@@ -150,35 +155,111 @@ def _pick(faces, hint_x=None):
     return res
 
 
-def _path_expr(points, dur, lo, hi, dead=80, move=0.4):
-    """Траектория x(t) кадра, как у оператора: кадр стоит, пока лицо рядом, а ушло дальше dead px —
-    быстрый плавный перевод за move с. Медленный дрейф нельзя: кадр сдвигается на целый пиксель
-    раз в несколько кадров, и на спокойной картинке это видно как рывки (кадры повторяются)."""
-    if not points:
-        return f"{(lo + hi) / 2:.0f}"
-    ts = np.arange(0, dur + 0.25, 0.25)
-    xs = np.interp(ts, [p[0] for p in points], [p[1] for p in points])
-    k = 2                                               # убрать дрожь детектора: среднее ±0,5 с
-    xs = np.clip([xs[max(0, i - k):i + k + 1].mean() for i in range(len(xs))], lo, hi)
-    if xs.max() - xs.min() < 60:                        # почти не двигается — стоим на месте
-        return f"{np.median(xs):.0f}"
-    cur, busy, keys = float(xs[0]), -1.0, []
-    for t, x in zip(ts, xs):
-        if t < busy:
+# ---------------------------------------------------------------- камера
+
+ZOOM_CUT = 1.18       # на каждой второй склейке план чуть ближе — скачок на вырезанной паузе не бросается в глаза
+PUNCH = 1.55          # резкий зум на лицо на панчлайне
+
+
+def _norm(w):
+    return re.sub(r"[^a-zа-я0-9]", "", w.lower().replace("ё", "е"))
+
+
+def _punches(sh, words, dur):
+    """Резкие зумы на панчлайны из zoom = ["фраза", {at = "фраза", scale = 1.7, boom = false}, {t = 12.5}]:
+    список (начало, конец, во сколько раз, «бум»). Зум держится до конца фразы (1,2–2,6 с)."""
+    keys = [_norm(w) for _, _, w in words]
+    out = []
+    for z in sh.get("zoom", []):
+        z = {"at": z} if isinstance(z, str) else dict(z)
+        if "t" in z:
+            t0 = float(z["t"])
+            t1 = t0 + float(z.get("len", 1.8))
+        else:
+            want = [_norm(x) for x in z["at"].split() if _norm(x)]
+            hit = next((i for i in range(len(keys) - len(want) + 1)
+                        if all(keys[i + j].startswith(want[j]) for j in range(len(want)))), None)
+            if hit is None:
+                raise ValueError(f"{sh['name']}: в субтитрах нет «{z['at']}» для зума")
+            t0, k = words[hit][0], hit + len(want) - 1
+            while (k + 1 < len(words) and words[k + 1][0] - words[k][1] < 0.5
+                   and not words[k][2].rstrip().endswith((".", "!", "?"))):
+                k += 1
+            t1 = min(max(words[k][1] + 0.35, t0 + 1.2), t0 + 2.6)
+        out.append((max(0.0, t0 - 0.03), min(dur, t1), float(z.get("scale", PUNCH)), bool(z.get("boom", True)), z))
+    return sorted(out, key=lambda p: p[0])
+
+
+def _shots(dur, cuts, punches, faces, base, area, follow=True, zoomcut=True):
+    """План камеры: [(начало, конец, (x, y, w, h), тряска)]. Камера не ездит за стримером:
+    внутри плана кадр стоит, меняется только склейкой — на вырезанных паузах (через раз чуть ближе),
+    на резком зуме и когда лицо ушло к краю кадра. base = (x, y, w, h) общего плана, area — где можно резать."""
+    bx, by, bw, bh = base
+    ax, ay, aw, ah = area
+    bounds = sorted({0.0, dur, *[c for c in cuts if 0 < c < dur],
+                     *[t for p in punches for t in p[:2] if 0 < t < dur]})
+    queue = list(zip(bounds[:-1], bounds[1:]))
+    cur = (bx + bw / 2, by + bh / 2)
+    shots = []
+
+    def box(cx, scale, face_y=None):
+        w, h = bw / scale, bh / scale
+        y = face_y - 0.40 * h if face_y is not None else by + (bh - h) * 0.1    # без лица — голова обычно вверху
+        x = min(max(cx - w / 2, ax), ax + aw - w)
+        y = min(max(y, ay), ay + ah - h)
+        return int(x) // 2 * 2, int(y) // 2 * 2, int(w) // 2 * 2, int(h) // 2 * 2
+
+    while queue:
+        a, b = queue.pop(0)
+        if b - a < 0.5 / FPS:
             continue
-        if abs(x - cur) > dead:                         # лицо ушло — переводим туда, где оно будет
-            to = float(np.clip(np.interp(t + move, ts, xs), lo, hi))
-            keys.append((t, cur, to))
-            cur, busy = to, t + move
-    if not keys:
-        return f"{cur:.0f}"
-    expr = f"{cur:.0f}"
-    for i in range(len(keys) - 1, -1, -1):
-        t, x0, x1 = keys[i]
-        s_ = f"((t-{t:.2f})/{move})"
-        ease = f"{x0:.0f}+({x1 - x0:.0f})*{s_}*{s_}*(3-2*{s_})"
-        expr = f"if(lt(t,{t:.2f}),{x0:.0f},if(lt(t,{t + move:.2f}),{ease},{expr}))"
-    return expr
+        near = [f for f in faces if a - 0.2 <= f[0] <= b + 0.2]
+        fx = float(np.median([f[1] for f in near])) if near else None
+        fy = float(np.median([f[2] for f in near])) if near else None
+        pn = next((p for p in punches if p[0] - 1e-6 <= a < p[1] - 1e-6), None)
+        if pn:                                              # резкий зум на лицо
+            z = pn[4]
+            cx = z["x"] * 1920 if "x" in z else (fx if fx is not None else cur[0])
+            cy = z["y"] * 1080 if "y" in z else fy
+            shots.append((a, b, box(cx, pn[2], cy), pn[3] and abs(a - pn[0]) < 1e-6))
+            continue
+        if follow and fx is not None and abs(fx - cur[0]) > 0.25 * bw:     # лицо у края — на склейке новый план
+            cur = (fx, cur[1])
+        if follow and b - a > 2.5 and near:                 # в длинном плане человек целиком ушёл из кадра
+            out = [f for f in sorted(near) if abs(f[1] - cur[0]) > 0.5 * bw]
+            for f in out:
+                stay = [g for g in near if f[0] <= g[0] <= f[0] + 1.0]
+                if f[0] - a > 1.0 and b - f[0] > 1.0 and all(abs(g[1] - cur[0]) > 0.5 * bw for g in stay):
+                    queue.insert(0, (f[0], b))
+                    b = f[0]
+                    break
+        n_cut = sum(1 for c in cuts if c <= a + 1e-6)
+        scale = ZOOM_CUT if zoomcut and n_cut % 2 == 1 else 1.0
+        shots.append((a, b, box(cur[0], scale, fy if scale > 1 else None), False))
+    merged = []
+    for sh in shots:                                        # одинаковые соседние планы — один план
+        if merged and merged[-1][2] == sh[2] and not sh[3]:
+            merged[-1] = (merged[-1][0], sh[1], sh[2], merged[-1][3])
+        else:
+            merged.append(sh)
+    return merged
+
+
+def _shot_graph(src, shots, out_w, out_h, label):
+    """Фильтры: каждый план — своя статичная обрезка (с тряской на «бум»), склейка планов подряд."""
+    n = len(shots)
+    g = [f"[{src}]split={n}" + "".join(f"[s{i}]" for i in range(n))] if n > 1 else [f"[{src}]null[s0]"]
+    for i, (a, b, (x, y, w, h), shake) in enumerate(shots):
+        f0, f1 = round(a * FPS), round(b * FPS)
+        xe, ye = str(x), str(y)
+        if shake:                                           # затухающая тряска 0,3 с на «бум»
+            amp = max(4, int(w * 0.012))
+            xe = f"'min(max({x}+{amp}*sin(2*PI*9*t)*exp(-t/0.3),0),in_w-{w})'"
+            ye = f"'min(max({y}+{amp}*cos(2*PI*7*t)*exp(-t/0.3),0),in_h-{h})'"
+        g.append(f"[s{i}]trim=start_frame={f0}:end_frame={f1},setpts=PTS-STARTPTS,"
+                 f"crop={w}:{h}:{xe}:{ye}:exact=1,scale={out_w}:{out_h}:flags=lanczos,setsar=1[p{i}]")
+    g.append("".join(f"[p{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[{label}]")
+    return g
 
 
 # ---------------------------------------------------------------- заголовок и субтитры
@@ -331,7 +412,7 @@ def build(sh: dict, out_dir: Path, log=print):
     parts = [_part(p, cache) for p in sh["parts"]]
     assets = Path("projects/work/_assets")
     # 1. куски без пауз → один горизонтальный исходник
-    segs, words, t = [], [], 0.0
+    segs, words, cuts, t = [], [], [], 0.0
     for pi, pt in enumerate(parts):
         for si, (a, b) in enumerate(_intervals(pt)):
             sig = hashlib.md5(repr((SEG_VERSION, [x for x in pt["bleeps"] if x[1] > a and x[0] < b],
@@ -341,6 +422,8 @@ def build(sh: dict, out_dir: Path, log=print):
             if not seg.exists():
                 _segment(pt, a, b, seg)
             segs.append(seg)
+            if t > 0:
+                cuts.append(t)
             words += [(t + x - a, t + min(y, b) - a, w) for x, y, w in pt["words"] if a <= x < b]
             t += b - a
     dur = t
@@ -348,6 +431,15 @@ def build(sh: dict, out_dir: Path, log=print):
     lst.write_text("".join(f"file '{s.resolve()}'\n" for s in segs), encoding="utf-8")
     src = work / "src.mkv"
     ffmpeg("-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", src)
+    drop = {w.lower() for w in sh.get("drop", [])}
+    fix = {k.lower(): v for k, v in sh.get("fix", {}).items()}
+    clean = []
+    for a, b, wd in words:
+        key = wd.strip().strip(".,!?").lower()
+        if key in drop or any(ord(c) > 0x2000 and c not in "«»—–…" for c in wd):   # иероглифы и т.п. — мусор
+            continue
+        clean.append((a, b, fix.get(key, wd)))
+    punches = _punches(sh, clean, dur)
     # 2. вертикальная раскладка
     lay = sh.get("layout", "face")
     login = parts[0]["login"]
@@ -365,22 +457,27 @@ def build(sh: dict, out_dir: Path, log=print):
         vh = H - band
         if faces:
             fh = float(np.median([f[3] for f in faces]))
+            faces = [f for f in faces if f[3] >= 0.55 * fh]  # мелкие «лица» — манекены, постеры, аватарки
             fy = float(np.median([f[2] for f in faces]))
         else:
             fh, fy = 300.0, 540.0
         ch = min(max(fh * 7.5, 760), 1080)
         cw = min(1920, ch * W / vh)
-        cy0 = int(min(max(fy - ch * 0.36, 0), 1080 - ch)) // 2 * 2
-        xe = _path_expr([(tt, cx - cw / 2) for tt, cx, cy, fh_ in faces], dur, 0, 1920 - cw)
+        cy0 = min(max(fy - ch * 0.36, 0), 1080 - ch)
+        cx = float(np.median([f[1] for f in faces])) if faces else 960.0
         if sh.get("crop"):                      # кадр вручную: центр x, центр y и высота (доли кадра)
             mx, my, mh = sh["crop"]
             ch = min(1080, mh * 1080)
             cw = min(1920, ch * W / vh)
-            cy0 = int(min(max(my * 1080 - ch / 2, 0), 1080 - ch)) // 2 * 2
-            xe = f"{min(max(mx * 1920 - cw / 2, 0), 1920 - cw):.0f}"
-        seen = f"crop={int(cw) // 2 * 2}:{int(ch) // 2 * 2}:'{xe}':{cy0}:exact=1"
-        g += [f"[sv]{seen},scale={W}:{vh}:flags=lanczos,setsar=1,"
-              f"pad={W}:{H}:0:{band}:color=0x0C0C0E,drawbox=x=0:y={band - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
+            cy0 = min(max(my * 1080 - ch / 2, 0), 1080 - ch)
+            cx, faces = mx * 1920, []           # лица тут ловятся не те — зум в центр кадра или по x/y зума
+        base = (min(max(cx - cw / 2, 0), 1920 - cw), cy0, cw, ch)
+        shots = _shots(dur, cuts, punches, faces, base, (0, 0, 1920, 1080), zoomcut=sh.get("zoomcut", True))
+        x0, y0, w0, h0 = (int(v) // 2 * 2 for v in base)
+        seen = f"crop={w0}:{h0}:{x0}:{y0}"
+        g += _shot_graph("sv", shots, W, vh, "fv")
+        g += [f"[fv]pad={W}:{H}:0:{band}:color=0x0C0C0E,"
+              f"drawbox=x=0:y={band - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
         title_y, sub_y = 0, band + int(vh * 0.66)
     elif lay == "split":
         fx = float(np.median([f[1] for f in faces])) if faces else None
@@ -418,9 +515,11 @@ def build(sh: dict, out_dir: Path, log=print):
         gx = int(min(max(gcx - gw / 2, 0), 1920 - gw)) // 2 * 2
         e = lambda v: int(v) // 2 * 2           # noqa: E731
         seen = f"crop={e(cw)}:{e(ch)}:{e(cx0)}:{e(cy0)}"     # вебка — самое заметное
-        g += [f"[sv]split=2[c][gm]",
-              f"[c]crop={e(cw)}:{e(ch)}:{e(cx0)}:{e(cy0)},scale={W}:{cam_h}:flags=lanczos,setsar=1[cv]",
-              f"[gm]crop={gw}:1080:{gx}:0,scale={W}:{game_h}:flags=lanczos,setsar=1[gv]",
+        inside = [f for f in faces if x <= f[1] <= x + w and y <= f[2] <= y + h]
+        shots = _shots(dur, [], punches, inside, (cx0, cy0, cw, ch), (x, y, w, h), follow=False, zoomcut=False)
+        g += [f"[sv]split=2[c][gm]"]
+        g += _shot_graph("c", shots, W, cam_h, "cv")
+        g += [f"[gm]crop={gw}:1080:{gx}:0,scale={W}:{game_h}:flags=lanczos,setsar=1[gv]",
               f"[cv][gv]vstack=inputs=2,pad={W}:{H}:0:{band}:color=0x0C0C0E,"
               f"drawbox=x=0:y={band + cam_h - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
         title_y, sub_y = 0, band + cam_h
@@ -437,22 +536,22 @@ def build(sh: dict, out_dir: Path, log=print):
     if "sub_y" in sh:   # субтитры закрывают лицо — переставить (доля высоты экрана)
         sub_y = int(H * sh["sub_y"])
     font = _black_font(assets / "fonts")
-    drop = {w.lower() for w in sh.get("drop", [])}
-    fix = {k.lower(): v for k, v in sh.get("fix", {}).items()}
-    clean = []
-    for a, b, wd in words:
-        key = wd.strip().strip(".,!?").lower()
-        if key in drop or any(ord(c) > 0x2000 and c not in "«»—–…" for c in wd):   # иероглифы и т.п. — мусор
-            continue
-        clean.append((a, b, fix.get(key, wd)))
     ass = work / "subs.ass"
     _ass(clean, dur, sub_y, ass)
     (work / "subs.txt").write_text(" ".join(_word(w) for _, _, w in clean), encoding="utf-8")
     g += [f"[base][1:v]overlay=0:{title_y}[tv]",
-          f"[tv]subtitles={ass}:fontsdir={font.parent},format=yuv420p[v]",
-          "[0:a]loudnorm=I=-14:TP=-1.0:LRA=11,aresample=48000[a]"]
+          f"[tv]subtitles={ass}:fontsdir={font.parent},format=yuv420p[v]"]
+    booms = [p[0] for p in punches if p[3]] if lay in ("face", "split") else []
+    fx_in = []
+    for j, tb in enumerate(booms):                          # «бум» на резком зуме
+        fx_in += ["-i", sfx.path("boom", assets / "sfx")]
+        ms = int(tb * 1000)
+        g.append(f"[{j + 2}:a]aformat=sample_rates=48000:channel_layouts=stereo,adelay={ms}|{ms},volume=0.75[fx{j}]")
+    mix = (f"[0:a]{''.join(f'[fx{j}]' for j in range(len(booms)))}amix=inputs={len(booms) + 1}:normalize=0:"
+           f"duration=first," if booms else "[0:a]")
+    g.append(f"{mix}loudnorm=I=-14:TP=-1.0:LRA=11,aresample=48000[a]")
     out = out_dir / f"{name}.mp4"
-    ffmpeg("-i", src, "-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.3f}", "-i", title,
+    ffmpeg("-i", src, "-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.3f}", "-i", title, *fx_in,
            "-filter_complex", ";".join(g), "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}",
            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-r", str(FPS),
            "-threads", str(cpu_count()), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
