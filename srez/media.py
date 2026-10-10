@@ -61,10 +61,11 @@ def snap_tb(stream: dict) -> str:
     return f"settb={den}/{num}"
 
 
-def judder(path, width=160, height=90) -> tuple[float, list[tuple[float, float]]]:
-    """Подвисания в готовом видео: кадр повторяется посреди движения (а не статичная сцена).
+def judder(path, width=160, height=96, grid=4) -> tuple[float, list[tuple[float, float]]]:
+    """Подвисания в готовом видео: кадр целиком повторяется посреди движения (а не статичная сцена).
 
-    Возвращает (долю таких кадров, отрезки в секундах, где их много)."""
+    Кадр делится на grid×grid частей: повтор — когда не изменилась ни одна часть, движение — когда
+    сильно изменилась хоть одна. Возвращает (долю повторов, отрезки в секундах, где их 3+ за секунду)."""
     fps = 30.0
     for s in probe(path)["streams"]:
         if s["codec_type"] == "video":
@@ -79,15 +80,16 @@ def judder(path, width=160, height=90) -> tuple[float, list[tuple[float, float]]
         buf = p.stdout.read(size)
         if len(buf) < size:
             break
-        cur = np.frombuffer(buf, np.uint8).astype(np.int16)
+        cur = np.frombuffer(buf, np.uint8).astype(np.int16).reshape(height, width)
         if prev is not None:
-            diffs.append(float(np.abs(cur - prev).mean()))
+            tiles = np.abs(cur - prev).reshape(grid, height // grid, grid, width // grid).mean(axis=(1, 3))
+            diffs.append(float(tiles.max()))
         prev = cur
     p.wait()
     d = np.array(diffs)
     if len(d) < 3:
         return 0.0, []
-    same, moving = d < 0.12, d > 0.5
+    same, moving = d < 0.3, d > 1.0
     near = np.zeros_like(same)
     near[1:] |= moving[:-1]
     near[:-1] |= moving[1:]
