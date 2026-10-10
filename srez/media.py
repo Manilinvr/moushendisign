@@ -61,11 +61,12 @@ def snap_tb(stream: dict) -> str:
     return f"settb={den}/{num}"
 
 
-def judder(path, width=160, height=96, grid=4, vf="null") -> tuple[float, list[tuple[float, float]]]:
+def judder(path, width=160, height=96, grid=4, vf="null", same=0.3) -> tuple[float, list[tuple[float, float]]]:
     """Подвисания в готовом видео: кадр целиком повторяется посреди движения (а не статичная сцена).
 
     Кадр делится на grid×grid частей: повтор — когда не изменилась ни одна часть, движение — когда
-    сильно изменилась хоть одна. vf — фильтр перед проверкой (например, та же обрезка, что в шортсе).
+    сильно изменилась хоть одна. vf — фильтр перед проверкой (например, та же обрезка, что в шортсе);
+    same — порог «кадр не изменился» (для исходника до сжатия выше: там шум камеры).
     Возвращает (долю повторов, отрезки в секундах, где их 3+ за секунду)."""
     fps = 30.0
     for s in probe(path)["streams"]:
@@ -90,11 +91,11 @@ def judder(path, width=160, height=96, grid=4, vf="null") -> tuple[float, list[t
     d = np.array(diffs)
     if len(d) < 3:
         return 0.0, []
-    same, moving = d < 0.3, d > 1.0
-    near = np.zeros_like(same)
+    still, moving = d < same, d > 1.0
+    near = np.zeros_like(still)
     near[1:] |= moving[:-1]
     near[:-1] |= moving[1:]
-    bad = same & near                                  # повтор кадра рядом с движением
+    bad = still & near                                 # повтор кадра рядом с движением
     per_sec = np.add.reduceat(bad, np.arange(0, len(bad), int(round(fps))))
     spans = []
     for i, n in enumerate(per_sec):

@@ -457,9 +457,12 @@ def build(sh: dict, out_dir: Path, log=print):
            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-r", str(FPS),
            "-threads", str(cpu_count()), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
     note = "" if 14.5 <= dur <= 30.5 else f"  ⚠ длина {dur:.1f} с — вне 15–30 с"
-    share, spans = judder(out)
+    top = band if lay in ("split", "face") else title_y + th + 20
+    hide = (f"drawbox=x=0:y=0:w={W}:h={top}:color=black:t=fill,"          # заголовок и прыгающие субтитры
+            f"drawbox=x=0:y={sub_y - 130}:w={W}:h=260:color=black:t=fill")   # проверка не должна считать движением
+    share, spans = judder(out, vf=hide)
     if spans:      # повторы кадров посреди движения — видео дёргается или «подвисает»
-        src_share, _ = judder(src, vf=f"fps={FPS},{seen}")      # те же повторы в самом стриме — лаг у стримера
+        src_share, _ = judder(src, vf=f"fps={FPS},{seen}", same=1.0)   # те же повторы в самом стриме — лаг у стримера
         where = "в самом стриме тоже" if src_share >= share * 0.7 else "в стриме их нет — ошибка сборки"
         note += (f"  ⚠ подвисает: {share:.0%} кадров повторяются ({where}: {src_share:.0%}), секунды "
                  + ", ".join(f"{a:.0f}–{b:.0f}" for a, b in spans))
