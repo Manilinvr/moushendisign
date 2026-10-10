@@ -14,7 +14,9 @@ import numpy as np
 MODEL = "small"
 CHECK_MODEL = "medium"              # проверочный проход только для мата: small часто пропускает короткий мат
 CHECKS = (("words_novad", MODEL), ("words_check", CHECK_MODEL))   # проверочные проходы — без фильтра тишины
-PAD_BEFORE, PAD_AFTER = 0.05, 0.1   # запас писка вокруг слова, сек
+PAD_BEFORE, PAD_AFTER = 0.12, 0.2   # запас писка вокруг слова, сек: время слов распознаватель даёт с ошибкой
+MERGE_GAP = 0.3                     # писки ближе этого сливаются в один — в зазоры проскакивают куски слов
+BLEEP_VERSION = 2                   # поменялся звук писка — поднять, чтобы клипы и куски шортсов пересобрались
 
 # Корни мата и грубых слов. Слово проверяется целиком (в нижнем регистре, ё → е).
 _ROOTS = [
@@ -78,7 +80,7 @@ def bad_spans(words, dur: float) -> list[tuple[float, float]]:
     for a, b, word in sorted(set(words) | set(merge_hyphens(words))):   # и куски, и склеенное слово
         if is_bad(word):
             a, b = max(0.0, a - PAD_BEFORE), min(dur, b + PAD_AFTER)
-            if out and a <= out[-1][1]:
+            if out and a <= out[-1][1] + MERGE_GAP:
                 out[-1] = (out[-1][0], max(out[-1][1], b))
             else:
                 out.append((a, b))
@@ -89,7 +91,7 @@ def union(*lists) -> list[tuple[float, float]]:
     """Несколько списков отрезков → один: пересекающиеся сливаются."""
     out = []
     for a, b in sorted(x for xs in lists for x in xs):
-        if out and a <= out[-1][1]:
+        if out and a <= out[-1][1] + MERGE_GAP:
             out[-1] = (out[-1][0], max(out[-1][1], b))
         else:
             out.append((a, b))
@@ -135,10 +137,13 @@ def audio_filter(bleeps, dur, style="beep"):
     if not bleeps:
         return ["[sp0]anull[sp]"]
     cond = "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in bleeps)
-    out = [f"[sp0]volume=0:enable='{cond}'[muted]"]
+    # enable у звука срабатывает на границах кадров, а loudnorm отдаёт кадры по 100 мс — края мата
+    # проскакивали мимо заглушения. Режем звук на кадры по 5 мс, чтобы заглушение совпало с писком.
+    out = [f"[sp0]asetnsamples=n=240:p=0,volume=0:enable='{cond}'[muted]"]
     if style != "beep":
         return out + ["[muted]anull[sp]"]
     fmt = "aformat=sample_rates=48000:channel_layouts=stereo"
-    out.append(f"sine=f=1000:r=48000:d={dur:.3f},volume=1.8,{fmt},volume=0:enable='not({cond})'[bp]")
+    out.append(f"sine=f=1000:r=48000:d={dur:.3f}:samples_per_frame=240,volume=1.8,{fmt},"
+               f"volume=0:enable='not({cond})'[bp]")
     out.append(f"[muted]{fmt}[mf];[mf][bp]amix=inputs=2:normalize=0:duration=first[sp]")
     return out

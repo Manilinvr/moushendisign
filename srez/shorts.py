@@ -334,7 +334,8 @@ def build(sh: dict, out_dir: Path, log=print):
     segs, words, t = [], [], 0.0
     for pi, pt in enumerate(parts):
         for si, (a, b) in enumerate(_intervals(pt)):
-            sig = hashlib.md5(repr((SEG_VERSION, [x for x in pt["bleeps"] if x[1] > a and x[0] < b],
+            sig = hashlib.md5(repr((SEG_VERSION, censor.BLEEP_VERSION,
+                                    [x for x in pt["bleeps"] if x[1] > a and x[0] < b],
                                     [x for x in pt["masks"] if x.active(pt["m"].start + a, pt["m"].start + b)]))
                               .encode()).hexdigest()[:8]           # другие маски или мат — другой файл
             seg = work / f"seg_{pi}_{si}_{a:.2f}-{b:.2f}_{sig}.mkv"

@@ -357,7 +357,7 @@ def render(project, moments, meta, log=print):
             key += "_m" + hashlib.md5(repr((s.mask_style, mk)).encode()).hexdigest()[:8]
         bl = bleeps.get(m.id, [])
         if bl:  # то же для запикивания
-            key += "_b" + hashlib.md5(repr((s.censor, bl)).encode()).hexdigest()[:8]
+            key += "_b" + hashlib.md5(repr((s.censor, bl, censor.BLEEP_VERSION)).encode()).hexdigest()[:8]
         path, off = _source_media(project, m, w)
         ed, card, side = None, None, srcs[m.source].plate_side
         if styled:
