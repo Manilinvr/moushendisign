@@ -378,7 +378,8 @@ def build(sh: dict, out_dir: Path, log=print):
             cw = min(1920, ch * W / vh)
             cy0 = int(min(max(my * 1080 - ch / 2, 0), 1080 - ch)) // 2 * 2
             xe = f"{min(max(mx * 1920 - cw / 2, 0), 1920 - cw):.0f}"
-        g += [f"[sv]crop={int(cw) // 2 * 2}:{int(ch) // 2 * 2}:'{xe}':{cy0}:exact=1,scale={W}:{vh}:flags=lanczos,setsar=1,"
+        seen = f"crop={int(cw) // 2 * 2}:{int(ch) // 2 * 2}:'{xe}':{cy0}:exact=1"
+        g += [f"[sv]{seen},scale={W}:{vh}:flags=lanczos,setsar=1,"
               f"pad={W}:{H}:0:{band}:color=0x0C0C0E,drawbox=x=0:y={band - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
         title_y, sub_y = 0, band + int(vh * 0.66)
     elif lay == "split":
@@ -416,6 +417,7 @@ def build(sh: dict, out_dir: Path, log=print):
             gcx = 960
         gx = int(min(max(gcx - gw / 2, 0), 1920 - gw)) // 2 * 2
         e = lambda v: int(v) // 2 * 2           # noqa: E731
+        seen = f"crop={e(cw)}:{e(ch)}:{e(cx0)}:{e(cy0)}"     # вебка — самое заметное
         g += [f"[sv]split=2[c][gm]",
               f"[c]crop={e(cw)}:{e(ch)}:{e(cx0)}:{e(cy0)},scale={W}:{cam_h}:flags=lanczos,setsar=1[cv]",
               f"[gm]crop={gw}:1080:{gx}:0,scale={W}:{game_h}:flags=lanczos,setsar=1[gv]",
@@ -423,6 +425,7 @@ def build(sh: dict, out_dir: Path, log=print):
               f"drawbox=x=0:y={band + cam_h - 3}:w={W}:h=6:color=0xC6FF33:t=fill[base]"]
         title_y, sub_y = 0, band + cam_h
     else:   # fit
+        seen = "null"
         g += ["[sv]split=2[b][f]",
               f"[b]scale=-2:{H},crop={W}:{H},boxblur=24:2,eq=brightness=-0.12,setsar=1[bb]",
               f"[f]scale={W}:-2,setsar=1[ff]",
@@ -456,7 +459,10 @@ def build(sh: dict, out_dir: Path, log=print):
     note = "" if 14.5 <= dur <= 30.5 else f"  ⚠ длина {dur:.1f} с — вне 15–30 с"
     share, spans = judder(out)
     if spans:      # повторы кадров посреди движения — видео дёргается или «подвисает»
-        note += f"  ⚠ подвисает: {share:.0%} кадров повторяются, секунды " + ", ".join(f"{a:.0f}–{b:.0f}" for a, b in spans)
+        src_share, _ = judder(src, vf=f"fps={FPS},{seen}")      # те же повторы в самом стриме — лаг у стримера
+        where = "в самом стриме тоже" if src_share >= share * 0.7 else "в стриме их нет — ошибка сборки"
+        note += (f"  ⚠ подвисает: {share:.0%} кадров повторяются ({where}: {src_share:.0%}), секунды "
+                 + ", ".join(f"{a:.0f}–{b:.0f}" for a, b in spans))
     log(f"  {name}: {dur:.1f} с, {lay}{note}")
     return out, dur
 

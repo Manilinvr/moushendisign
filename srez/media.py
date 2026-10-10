@@ -61,11 +61,12 @@ def snap_tb(stream: dict) -> str:
     return f"settb={den}/{num}"
 
 
-def judder(path, width=160, height=96, grid=4) -> tuple[float, list[tuple[float, float]]]:
+def judder(path, width=160, height=96, grid=4, vf="null") -> tuple[float, list[tuple[float, float]]]:
     """Подвисания в готовом видео: кадр целиком повторяется посреди движения (а не статичная сцена).
 
     Кадр делится на grid×grid частей: повтор — когда не изменилась ни одна часть, движение — когда
-    сильно изменилась хоть одна. Возвращает (долю повторов, отрезки в секундах, где их 3+ за секунду)."""
+    сильно изменилась хоть одна. vf — фильтр перед проверкой (например, та же обрезка, что в шортсе).
+    Возвращает (долю повторов, отрезки в секундах, где их 3+ за секунду)."""
     fps = 30.0
     for s in probe(path)["streams"]:
         if s["codec_type"] == "video":
@@ -74,7 +75,7 @@ def judder(path, width=160, height=96, grid=4) -> tuple[float, list[tuple[float,
     import numpy as np
     size = width * height
     p = subprocess.Popen(["ffmpeg", "-v", "error", "-nostdin", "-i", str(path), "-vf",
-                          f"scale={width}:{height},format=gray", "-f", "rawvideo", "-"], stdout=subprocess.PIPE)
+                          f"{vf},scale={width}:{height},format=gray", "-f", "rawvideo", "-"], stdout=subprocess.PIPE)
     diffs, prev = [], None
     while True:
         buf = p.stdout.read(size)
