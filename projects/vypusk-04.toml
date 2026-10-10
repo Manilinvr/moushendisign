@@ -1,0 +1,17 @@
+# Выпуск №4: 4 стрима (2897017965 владелец прислал дважды — берём один раз)
+[video]
+title = "Топ Моменты Стримов"
+minutes = 18
+censor = "beep"         # аудитория — подростки: мат запикиваем
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2897017965"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2896935082"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2896973093"
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2896940076"
