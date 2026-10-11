@@ -129,7 +129,15 @@ title = "Где портал?"
 caption = "НОВЫЙ МИР ДЕЛАТЬ?!"
 at = "новый мир"
 from = "1:55:21"
-to = "1:55:51"
+to = "1:55:44"
+
+[[pick]]
+id = "vod2896973093-k06"
+title = "Нашёл проход"
+caption = "NEVER GIVE UP!"
+at = "never give up"
+from = "2:01:31.6"
+to = "2:02:01.9"
 
 [[pick]]
 id = "vod2896973093-k05"
