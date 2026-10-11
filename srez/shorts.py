@@ -470,7 +470,8 @@ def build(sh: dict, out_dir: Path, log=print):
     out = out_dir / f"{name}.mp4"
     ffmpeg("-i", src, "-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.3f}", "-i", title,
            "-filter_complex", ";".join(g), "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}",
-           "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-r", str(FPS),
+           "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-maxrate", "3500k", "-bufsize", "7000k",   # < 30 МБ на минуту — уходит в чат
+           "-pix_fmt", "yuv420p", "-r", str(FPS),
            "-threads", str(cpu_count()), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
     note = "" if 14.5 <= dur <= 60.5 else f"  ⚠ длина {dur:.1f} с — вне 15–60 с"
     top = band if lay in ("split", "face") else title_y + th + 20
