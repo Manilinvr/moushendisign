@@ -1,6 +1,6 @@
-"""YouTube Shorts из готовых выпусков: вертикально 1080×1920, 15–30 с, крупные субтитры по словам.
+"""YouTube Shorts из готовых выпусков: вертикально 1080×1920, 15–60 с, крупные субтитры по словам.
 
-    python -m srez shorts projects/shorts-01.toml        все шортсы из файла → output/shorts/
+    python -m srez shorts projects/shorts-01.toml        все шортсы из файла → output/shorts-01/
     python -m srez shorts projects/shorts-01.toml 03     только третий (по номеру или части имени)
 
 Файл шортсов:
@@ -18,7 +18,7 @@
     # drop = ["returned"]          # слова, которые распознались мусором, — убрать из субтитров
     # fix = { "лиску" = "Алиску" }   # исправить слово в субтитрах
 
-Берётся всё из выпуска: исходники клипов, маски рекламы, запикивание мата и распознанные слова.
+Берётся всё из выпуска: исходники клипов, маски рекламы, запикивание мата (`censor` проекта) и распознанные слова.
 Паузы короче, чем в выпуске (шортс должен лететь), мат в субтитрах — звёздочками.
 """
 import hashlib
@@ -35,7 +35,9 @@ from . import censor, edit, plates
 from .media import cpu_count, ffmpeg, judder, probe, snap_tb
 from .moments import Moment
 from .project import load
-from .render import _source_media, load_masks, mask_filters
+from .moments import select
+from .pipeline import load_candidates
+from .render import _source_media, _speech, erase_plates, load_masks, mask_filters
 
 W, H, FPS = 1080, 1920, 30
 SEG_VERSION = 2          # поменялась сборка кусков — поднять, чтобы старые куски из кэша не брались
@@ -71,15 +73,23 @@ def _part(spec_part, cache):
     ep, mid, a, b = spec_part
     if ep not in cache:
         p = load(Path("projects") / f"{ep}.toml")
-        cache[ep] = (p, json.loads((p.work / "candidates.json").read_text(encoding="utf-8")), load_masks(p))
-    p, data, masks = cache[ep]
+        masks = load_masks(p)
+        erased = {}
+        if any(x.style in ("erase", "paint") for ms in masks.values() for x in ms):
+            # подложки для стирания рекламы — те же, что в выпуске (по тем же клипам)
+            erased = erase_plates(p, select(load_candidates(p)[1], p.settings), masks, p.work / "render")
+        cache[ep] = (p, json.loads((p.work / "candidates.json").read_text(encoding="utf-8")), masks, erased)
+    p, data, masks, erased = cache[ep]
     m = Moment(**next(x for x in data["moments"] if x["id"] == mid))
     src, off = _source_media(p, m, p.work / "render")
+    _speech(p, m, src, off)                         # распознанная речь клипа (кэш общий с выпуском)
     cc = json.loads((p.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json").read_text(encoding="utf-8"))
     info = data["sources"][m.source]
     words = censor.merge_hyphens([tuple(x) for x in cc["words"]])
     bleeps = censor.union(censor.cached_spans(cc, m.length), m.manual_bleeps())
+    pl = {repr(x): erased[(m.source, repr(x))] for x in masks[m.source] if (m.source, repr(x)) in erased}
     return {"p": p, "m": m, "src": src, "off": off, "a": float(a), "b": float(b), "masks": masks[m.source],
+            "plates": pl,
             "bleeps": sorted(bleeps), "words": words,
             "name": info["name"], "login": info.get("login")}
 
@@ -101,7 +111,7 @@ def _segment(pt, a, b, out: Path):
     dur = b - a
     m = pt["m"]
     act = [x for x in pt["masks"] if x.active(m.start + a, m.start + b)]
-    graph, cur = mask_filters(act, m.start + a, dur, v["width"], v["height"], src="sv0")
+    graph, cur = mask_filters(act, m.start + a, dur, v["width"], v["height"], src="sv0", plates=pt["plates"])
     graph.insert(0, f"[0:v]{snap_tb(v)}[sv0]")     # кадры на сетку источника — иначе 60→30 к/с дёргается
     graph.append(f"[{cur}]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
                  f"setsar=1,fps={FPS},format=yuv420p[v]")
@@ -111,8 +121,9 @@ def _segment(pt, a, b, out: Path):
     else:
         inp += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
         graph.append("[1:a]anull[sp0]")
-    bl = [(max(0.0, x - a), min(dur, y - a)) for x, y in pt["bleeps"] if y > a and x < b]
-    graph += censor.audio_filter(bl, dur, "beep")
+    style = pt["p"].settings.censor
+    bl = [(max(0.0, x - a), min(dur, y - a)) for x, y in pt["bleeps"] if y > a and x < b] if style != "off" else []
+    graph += censor.audio_filter(bl, dur, style)
     ffmpeg(*inp, "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[sp]",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2",
            "-t", f"{dur:.3f}", out)
@@ -334,9 +345,10 @@ def build(sh: dict, out_dir: Path, log=print):
     segs, words, t = [], [], 0.0
     for pi, pt in enumerate(parts):
         for si, (a, b) in enumerate(_intervals(pt)):
-            sig = hashlib.md5(repr((SEG_VERSION, censor.BLEEP_VERSION,
+            sig = hashlib.md5(repr((SEG_VERSION, censor.BLEEP_VERSION, pt["p"].settings.censor,
                                     [x for x in pt["bleeps"] if x[1] > a and x[0] < b],
-                                    [x for x in pt["masks"] if x.active(pt["m"].start + a, pt["m"].start + b)]))
+                                    [(x, pt["plates"].get(repr(x))) for x in pt["masks"]
+                                     if x.active(pt["m"].start + a, pt["m"].start + b)]))
                               .encode()).hexdigest()[:8]           # другие маски или мат — другой файл
             seg = work / f"seg_{pi}_{si}_{a:.2f}-{b:.2f}_{sig}.mkv"
             if not seg.exists():
@@ -457,7 +469,7 @@ def build(sh: dict, out_dir: Path, log=print):
            "-filter_complex", ";".join(g), "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}",
            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-r", str(FPS),
            "-threads", str(cpu_count()), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
-    note = "" if 14.5 <= dur <= 30.5 else f"  ⚠ длина {dur:.1f} с — вне 15–30 с"
+    note = "" if 14.5 <= dur <= 60.5 else f"  ⚠ длина {dur:.1f} с — вне 15–60 с"
     top = band if lay in ("split", "face") else title_y + th + 20
     hide = (f"drawbox=x=0:y=0:w={W}:h={top}:color=black:t=fill,"          # заголовок и прыгающие субтитры
             f"drawbox=x=0:y={sub_y - 130}:w={W}:h=260:color=black:t=fill")   # проверка не должна считать движением
@@ -473,7 +485,7 @@ def build(sh: dict, out_dir: Path, log=print):
 
 def run(path, only=None, log=print):
     cfg = tomllib.loads(Path(path).read_text(encoding="utf-8"))
-    out_dir = Path("projects/output/shorts")
+    out_dir = Path("projects/output") / Path(path).stem
     out_dir.mkdir(parents=True, exist_ok=True)
     items = cfg.get("short", [])
     if only:
