@@ -19,15 +19,18 @@ def _even(v):
     return max(2, int(v) // 2 * 2)
 
 
-def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur", src="0:v"):
-    """Цепочка filter_complex, закрывающая рекламу. Возвращает (фильтры, метка выхода)."""
+def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur", src="0:v", plates=None):
+    """Цепочка filter_complex, закрывающая рекламу. Возвращает (фильтры, метка выхода).
+    plates — подложки для масок "erase"/"paint" (repr маски → erase.plate)."""
     act = [m for m in masks if m.active(clip_start, clip_start + dur)]
     if not act:
         return [], src
     out, cur = [], src
-    if style != "fill":
-        out.append(f"[{src}]split={len(act) + 1}[mb]" + "".join(f"[mc{i}]" for i in range(len(act))))
+    blur = [m for m in act if m.style not in ("erase", "paint")] if style != "fill" else []
+    if blur:
+        out.append(f"[{src}]split={len(blur) + 1}[mb]" + "".join(f"[mc{i}]" for i in range(len(blur))))
         cur = "mb"
+    bi = 0
     for i, m in enumerate(act):
         x, y, w, h = m.box
         px, py = _even(x * src_w) if x > 0 else 0, _even(y * src_h) if y > 0 else 0
@@ -38,13 +41,19 @@ def mask_filters(masks, clip_start, dur, src_w, src_h, style="blur", src="0:v"):
             a = m.start - clip_start if m.start is not None else -1
             b = m.end - clip_start if m.end is not None else dur + 1
             en = f":enable='between(t,{a:.2f},{b:.2f})'"
+        if m.style in ("erase", "paint"):
+            from .erase import plate_filters
+            f, cur = plate_filters(plates[repr(m)], cur, i, en, keyed=m.style == "erase")
+            out += f
+            continue
         if style == "fill":
             out.append(f"[{cur}]drawbox=x={px}:y={py}:w={pw}:h={ph}:color=0x0C0C0E:t=fill{en}[mv{i}]")
         else:
             sigma = max(12, min(pw, ph) // 4)
-            out.append(f"[mc{i}]crop={pw}:{ph}:{px}:{py},gblur=sigma={sigma}:steps=3,"
+            out.append(f"[mc{bi}]crop={pw}:{ph}:{px}:{py},gblur=sigma={sigma}:steps=3,"
                        f"eq=brightness=-0.06[mk{i}]")
             out.append(f"[{cur}][mk{i}]overlay={px}:{py}{en}[mv{i}]")
+            bi += 1
         cur = f"mv{i}"
     return out, cur
 
@@ -57,7 +66,7 @@ def crop_px(box, src_w, src_h):
 
 
 def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.0, bleeps=(),
-                edit=None, card=None, side="left", assets=None, crop=None):
+                edit=None, card=None, side="left", assets=None, crop=None, plates=None):
     """Клип 1920×1080: реклама закрыта, мат запикан. В стиле sting ещё зум на реакцию с «бум»,
     подпись-реакция, вырезанные паузы и плашка стримера поверх первых секунд."""
     W, H, fps = s.width, s.height, s.fps
@@ -75,7 +84,8 @@ def encode_clip(src, offset, dur, out: Path, s, threads, masks=(), clip_start=0.
         n_in += 1
         return n_in - 1
 
-    graph, cur = mask_filters(masks, clip_start, dur, v["width"], v["height"], s.mask_style, src="sv0")
+    graph, cur = mask_filters(masks, clip_start, dur, v["width"], v["height"], s.mask_style, src="sv0",
+                              plates=plates)
     graph.insert(0, f"[0:v]{snap_tb(v)}[sv0]")     # кадры на сетку источника — иначе 60→30 к/с дёргается
     src_h = v["height"]
     if crop:   # кадрирование: в ролик идёт только часть кадра (например, без чата поверх вебки)
@@ -344,6 +354,24 @@ def _speech(project, m, path, off):
     return json.loads(cache.read_text(encoding="utf-8"))["words"]
 
 
+def erase_plates(project, moments, masks, w, log=print):
+    """Подложки для масок "erase"/"paint": по всем клипам, где маска на экране. (стрим, repr маски) → erase.plate."""
+    from . import erase
+    out = {}
+    for src in project.sources:
+        for mk in masks[src.id]:
+            if mk.style not in ("erase", "paint"):
+                continue
+            act = [m for m in moments if m.source == src.id and mk.active(m.start, m.end)]
+            if not act:
+                continue
+            media = [(*_source_media(project, m, w), m.length) for m in act]
+            sv = next(x for x in probe(media[0][0])["streams"] if x["codec_type"] == "video")
+            out[(src.id, repr(mk))] = erase.plate(crop_px(mk.box, sv["width"], sv["height"]),
+                                                  [(str(p), o, d) for p, o, d in media], w, log)
+    return out
+
+
 def render(project, moments, meta, log=print):
     s = project.settings
     W, H = s.width, s.height
@@ -358,14 +386,16 @@ def render(project, moments, meta, log=print):
     assets = project.work.parent / "_assets"
     srcs = {x.id: x for x in project.sources}
     music, credit = (sfx.music(s.music, assets / "music") if s.music else (None, ""))
+    plates = erase_plates(project, moments, masks, w, log)
 
     def build(item):
         i, m = item
         info = meta[m.source]
         mk = [x for x in masks[m.source] if x.active(m.start, m.end)]
         key = f"{m.start:.1f}-{m.end:.1f}"
+        pl = {repr(x): plates[(m.source, repr(x))] for x in mk if (m.source, repr(x)) in plates}
         if mk:  # другие маски — другой файл, чтобы не взять старый клип из кэша
-            key += "_m" + hashlib.md5(repr((s.mask_style, mk)).encode()).hexdigest()[:8]
+            key += "_m" + hashlib.md5(repr((s.mask_style, mk, sorted(pl.items()))).encode()).hexdigest()[:8]
         bl = bleeps.get(m.id, [])
         if bl:  # то же для запикивания
             key += "_b" + hashlib.md5(repr((s.censor, bl, censor.BLEEP_VERSION)).encode()).hexdigest()[:8]
@@ -395,7 +425,7 @@ def render(project, moments, meta, log=print):
         clip = w / f"clip_{m.id}_{key}.mkv"
         if not clip.exists():
             encode_clip(path, off, m.length, clip, s, threads, masks=mk, clip_start=m.start, bleeps=bl,
-                        edit=ed, card=card, side=side, assets=assets, crop=crop)
+                        edit=ed, card=card, side=side, assets=assets, crop=crop, plates=pl)
         log(f"  готово {i + 1}/{len(moments)}: {info['name']} — {m.title or m.label}")
         if styled:
             z = ed["zoom"]

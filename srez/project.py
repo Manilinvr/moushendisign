@@ -45,11 +45,14 @@ class Mask:
     """Прямоугольник, который нужно закрыть (реклама, баннер, QR-код).
 
     box — x, y, ширина, высота в долях кадра (0…1); start/end — секунды стрима,
-    в которые баннер висит на экране (None — весь стрим).
+    в которые баннер висит на экране (None — весь стрим); style — "" (как в [video] mask_style),
+    "erase" — стереть предмет, дорисовав фон (неподвижная камера, srez/erase.py), "paint" — то же для
+    наклейки-оверлея, которую никто не заслоняет.
     """
     box: tuple[float, float, float, float]
     start: float | None = None
     end: float | None = None
+    style: str = ""
 
     def active(self, a: float, b: float) -> bool:
         return (self.start is None or self.start < b) and (self.end is None or self.end > a)
@@ -71,7 +74,7 @@ def parse_masks(items) -> list[Mask]:
     out = []
     for it in items or []:
         if isinstance(it, dict):
-            out.append(Mask(tuple(it["box"]), parse_time(it.get("from")), parse_time(it.get("to"))))
+            out.append(Mask(tuple(it["box"]), parse_time(it.get("from")), parse_time(it.get("to")), it.get("style", "")))
         else:
             out.append(Mask(tuple(it)))
     for m in out:
