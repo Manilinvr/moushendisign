@@ -179,6 +179,7 @@ def decide(m, path, offset, words, settings, cache: Path, assets: Path, crop=Non
     zoom = None
     if tp is not None and settings.zoom and m.length - 0.4 - tp >= 0.8:
         key = f"{tp:.2f}" + ("@" + ",".join(map(str, crop)) if crop else "")
+        key += "#" + ",".join(map(str, m.zoom_box)) if m.zoom_box else ""
         if key not in d["boxes"]:        # лицо ищем в тот момент, где будет зум
             img = cache.with_suffix(".jpg")
             frame(path, offset + tp + 0.3, img)
@@ -188,7 +189,16 @@ def decide(m, path, offset, words, settings, cache: Path, assets: Path, crop=Non
                 x, y, w, h = crop
                 Image.open(img).crop((x, y, x + w, y + h)).save(img)
                 zmax = max(ZOOM_MIN, min(ZOOM_MAX, 2.4 * h / settings.height))
-            d["boxes"][key] = zoom_box(img, assets, zmax)
+            if m.zoom_box:               # рамка задана вручную (долями кадра, высота — по 16:9)
+                from PIL import Image
+                w0, h0 = Image.open(img).size
+                bw = min(w0, max(w0 / zmax, m.zoom_box[2] * w0))
+                bh = bw * 9 / 16
+                x = min(max(0.0, m.zoom_box[0] * w0), w0 - bw)
+                y = min(max(0.0, m.zoom_box[1] * h0), h0 - bh)
+                d["boxes"][key] = [int(v) // 2 * 2 for v in (x, y, bw, bh)]
+            else:
+                d["boxes"][key] = zoom_box(img, assets, zmax)
         if d["boxes"][key]:
             zoom = (tp, _snap(min(tp + ZOOM_LEN, m.length - 0.4)), d["boxes"][key])
     cache.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
