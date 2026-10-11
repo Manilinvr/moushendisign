@@ -156,35 +156,42 @@ def arrange(chosen: list[Moment], s) -> list[Moment]:
     middle = [m for m in chosen if m is not opener and m is not closer]
     if s.order == "stream":
         middle.sort(key=lambda m: (m.source, m.start))
-    else:
-        # стримеры вперемешку и равномерно по всему ролику (у кого клипов больше — чаще,
-        # но не пачкой в конце), внутри стрима — в хронологии
-        queues = {}
-        for m in sorted(middle, key=lambda m: m.start):
-            queues.setdefault(m.source, []).append(m)
-        keys = sorted(queues, key=lambda k: -max(m.score for m in queues[k]))
-        slots = sorted(((i + 0.5) / len(queues[k]), j, m)
-                       for j, k in enumerate(keys) for i, m in enumerate(queues[k]))
-        middle = [m for *_, m in slots]
-        # один стример два раза подряд (и рядом с открытием/финалом) — меняем с ближайшим клипом,
-        # который никому не станет соседом-однофамильцем
-        seq = [opener, *middle, closer]
+        return _follow([opener, *middle, closer])
+    # клипы с after встают за своим клипом потом, остальные — стримеры вперемешку и равномерно
+    # по всему ролику (у кого клипов больше — чаще, но не пачкой в конце), внутри стрима — в хронологии
+    ids = {m.id for m in chosen}
+    followers = [m for m in middle if m.after in ids]
+    queues = {}
+    for m in sorted((m for m in middle if m not in followers), key=lambda m: m.start):
+        queues.setdefault(m.source, []).append(m)
+    keys = sorted(queues, key=lambda k: -max(m.score for m in queues[k]))
+    slots = sorted(((i + 0.5) / len(queues[k]), j, m)
+                   for j, k in enumerate(keys) for i, m in enumerate(queues[k]))
+    seq = _follow([opener, *(m for *_, m in slots), *followers, closer])
+    locked = {m.id for m in followers} | {m.after for m in followers}
+    return _spread(seq, locked)
 
-        def clash(i):
-            return any(0 <= j < len(seq) and seq[j].source == seq[i].source for j in (i - 1, i + 1))
 
-        for i in range(1, len(seq) - 1):
-            if not clash(i):
+def _spread(seq, locked):
+    """Один стример два раза подряд — меняем с ближайшим клипом, который никому не станет соседом-
+    однофамильцем. Открытие, финал и цепочки after не трогаем (внутри цепочки соседство нарочно)."""
+    def same(a, b):
+        return a.source == b.source and a.after != b.id and b.after != a.id
+
+    def clash(i):
+        return any(0 <= j < len(seq) and same(seq[j], seq[i]) for j in (i - 1, i + 1))
+
+    for i in range(1, len(seq) - 1):
+        if seq[i].id in locked or not clash(i):
+            continue
+        for j in sorted(range(1, len(seq) - 1), key=lambda j: abs(j - i)):
+            if j == i or seq[j].id in locked or seq[j].source == seq[i].source:
                 continue
-            for j in sorted(range(1, len(seq) - 1), key=lambda j: abs(j - i)):
-                if j == i or seq[j].source == seq[i].source:
-                    continue
-                seq[i], seq[j] = seq[j], seq[i]
-                if not clash(i) and not clash(j):
-                    break
-                seq[i], seq[j] = seq[j], seq[i]
-        middle = seq[1:-1]
-    return _follow([opener, *middle, closer])
+            seq[i], seq[j] = seq[j], seq[i]
+            if not clash(i) and not clash(j):
+                break
+            seq[i], seq[j] = seq[j], seq[i]
+    return seq
 
 
 def _follow(seq):
