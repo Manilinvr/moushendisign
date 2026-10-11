@@ -3,7 +3,7 @@
 [video]
 title = "Шортсы №2"
 minutes = 90
-censor = "beep"
+censor = "off"          # решение владельца 11.10.2026: мат не запикивать никогда, писк — только по его просьбе
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2897954926"
