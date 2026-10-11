@@ -1,4 +1,4 @@
-"""YouTube Shorts из готовых выпусков: вертикально 1080×1920, 15–60 с, крупные субтитры по словам.
+"""YouTube Shorts из готовых выпусков: вертикально 1080×1920, 15–60 с (до 3 мин для длинной истории), крупные субтитры.
 
     python -m srez shorts projects/shorts-01.toml        все шортсы из файла → output/shorts-01/
     python -m srez shorts projects/shorts-01.toml 03     только третий (по номеру или части имени)
@@ -470,10 +470,10 @@ def build(sh: dict, out_dir: Path, log=print):
     out = out_dir / f"{name}.mp4"
     ffmpeg("-i", src, "-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.3f}", "-i", title,
            "-filter_complex", ";".join(g), "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}",
-           "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-maxrate", "3500k", "-bufsize", "7000k",   # < 30 МБ на минуту — уходит в чат
+           "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-maxrate", "3500k", "-bufsize", "7000k",   # < 30 МБ на минуту
            "-pix_fmt", "yuv420p", "-r", str(FPS),
            "-threads", str(cpu_count()), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
-    note = "" if 14.5 <= dur <= 60.5 else f"  ⚠ длина {dur:.1f} с — вне 15–60 с"
+    note = "" if 14.5 <= dur <= 180.5 else f"  ⚠ длина {dur:.1f} с — вне 15 с – 3 мин"
     top = band if lay in ("split", "face") else title_y + th + 20
     hide = (f"drawbox=x=0:y=0:w={W}:h={top}:color=black:t=fill,"          # заголовок и прыгающие субтитры
             f"drawbox=x=0:y={sub_y - 130}:w={W}:h=260:color=black:t=fill")   # проверка не должна считать движением

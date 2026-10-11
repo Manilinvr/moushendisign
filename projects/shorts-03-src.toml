@@ -1,0 +1,10 @@
+# Исходник для шортсов №3: стрим sasavot «НАТУРАЛЬНАЯ/БАНЯ» (11.10.2026, 6 ч 10 мин).
+# Моменты — по полной расшифровке (shorts-03-src.picks.toml), сами шортсы — projects/shorts-03.toml
+[video]
+title = "Шортсы №3"
+minutes = 180
+censor = "off"          # мат не запикиваем (решение владельца 11.10.2026)
+
+[[stream]]
+url = "https://www.twitch.tv/videos/2898016348"
+# sasavot
