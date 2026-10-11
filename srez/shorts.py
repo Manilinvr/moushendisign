@@ -16,6 +16,8 @@
     # cam = [0, 0.55, 0.16, 0.27]   # split: вебка вручную (доли кадра), если лицо не находится
     # sub_y = 0.45         # где строка субтитров (доля высоты экрана), если по умолчанию она на лице
     # drop = ["returned"]          # слова, которые распознались мусором, — убрать из субтитров
+    # words = "check"     # субтитры из проверочного распознавания (medium без фильтра тишины) — если в крике или
+    #                     # под музыку основное распознавание пропустило фразы
     # fix = { "лиску" = "Алиску" }   # исправить слово в субтитрах
 
 Берётся всё из выпуска: исходники клипов, маски рекламы, запикивание мата (`censor` проекта) и распознанные слова.
@@ -69,7 +71,7 @@ def _black_font(folder: Path) -> Path:
 
 # ---------------------------------------------------------------- куски и вырезка пауз
 
-def _part(spec_part, cache):
+def _part(spec_part, cache, source="words"):
     ep, mid, a, b = spec_part
     if ep not in cache:
         p = load(Path("projects") / f"{ep}.toml")
@@ -85,7 +87,7 @@ def _part(spec_part, cache):
     _speech(p, m, src, off)                         # распознанная речь клипа (кэш общий с выпуском)
     cc = json.loads((p.work / "censor" / f"{m.id}_{m.start:.1f}-{m.end:.1f}.json").read_text(encoding="utf-8"))
     info = data["sources"][m.source]
-    words = censor.merge_hyphens([tuple(x) for x in cc["words"]])
+    words = censor.merge_hyphens([tuple(x) for x in cc[source]])
     bleeps = censor.union(censor.cached_spans(cc, m.length), m.manual_bleeps())
     pl = {repr(x): erased[(m.source, repr(x))] for x in masks[m.source] if (m.source, repr(x)) in erased}
     return {"p": p, "m": m, "src": src, "off": off, "a": float(a), "b": float(b), "masks": masks[m.source],
@@ -339,7 +341,8 @@ def build(sh: dict, out_dir: Path, log=print):
     work = Path("projects/work/shorts") / name
     work.mkdir(parents=True, exist_ok=True)
     cache = {}
-    parts = [_part(p, cache) for p in sh["parts"]]
+    src_words = {"check": "words_check", "novad": "words_novad"}.get(sh.get("words"), "words")
+    parts = [_part(p, cache, src_words) for p in sh["parts"]]
     assets = Path("projects/work/_assets")
     # 1. куски без пауз → один горизонтальный исходник
     segs, words, t = [], [], 0.0
