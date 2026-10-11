@@ -22,6 +22,7 @@ class Moment:
     sfx: list = field(default_factory=list)   # [["ding", 12.3], …] — звуки в секундах клипа
     hook: int = 0                  # место панчлайна в хуке (1, 2, 3); 0 — хук выбирается по силе
     bleep: list = field(default_factory=list)  # [[начало, конец], …] — ручной писк, секунды стрима
+    after: str = ""                # id клипа, сразу за которым поставить этот (одна история из разных стримов)
 
     def manual_bleeps(self):
         """Ручной писк в секундах клипа (мат, который распознаватель не узнал)."""
@@ -183,4 +184,22 @@ def arrange(chosen: list[Moment], s) -> list[Moment]:
                     break
                 seq[i], seq[j] = seq[j], seq[i]
         middle = seq[1:-1]
-    return [opener, *middle, closer]
+    return _follow([opener, *middle, closer])
+
+
+def _follow(seq):
+    """Клипы с after — сразу за своим клипом (цепочки тоже: Б за А, В за Б)."""
+    ids, ends = {m.id for m in seq}, (seq[0], seq[-1])     # открытие и финал не двигаем
+    for _ in range(len(seq)):
+        moved = False
+        for m in [m for m in seq if m.after in ids and m not in ends]:
+            i = next(k for k, x in enumerate(seq) if x.id == m.after)
+            if i + 1 < len(seq) and seq[i + 1] is m:
+                continue
+            seq.remove(m)
+            i = next(k for k, x in enumerate(seq) if x.id == m.after)
+            seq.insert(i + 1, m)
+            moved = True
+        if not moved:
+            break
+    return seq
