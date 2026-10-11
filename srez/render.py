@@ -386,14 +386,14 @@ def render(project, moments, meta, log=print):
     assets = project.work.parent / "_assets"
     srcs = {x.id: x for x in project.sources}
     music, credit = (sfx.music(s.music, assets / "music") if s.music else (None, ""))
-    plates = erase_plates(project, moments, masks, w, log)
+    erased = erase_plates(project, moments, masks, w, log)
 
     def build(item):
         i, m = item
         info = meta[m.source]
         mk = [x for x in masks[m.source] if x.active(m.start, m.end)]
         key = f"{m.start:.1f}-{m.end:.1f}"
-        pl = {repr(x): plates[(m.source, repr(x))] for x in mk if (m.source, repr(x)) in plates}
+        pl = {repr(x): erased[(m.source, repr(x))] for x in mk if (m.source, repr(x)) in erased}
         if mk:  # другие маски — другой файл, чтобы не взять старый клип из кэша
             key += "_m" + hashlib.md5(repr((s.mask_style, mk, sorted(pl.items()))).encode()).hexdigest()[:8]
         bl = bleeps.get(m.id, [])
