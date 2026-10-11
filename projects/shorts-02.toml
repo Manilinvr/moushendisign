@@ -41,7 +41,7 @@ name = "04_zloyn_volnuyus"
 title = "Злой первый раз идёт на [дракона]"
 layout = "split"
 cam = [0, 0.318, 0.234, 0.304]
-parts = [["shorts-02-src", "vod2897954926-k01", 2.3, 25.05],
+parts = [["shorts-02-src", "vod2897954926-k01", 2.3, 24.97],
          ["shorts-02-src", "vod2897954926-k10", 6.3, 13.2],
          ["shorts-02-src", "vod2897954926-k10", 24.2, 27.4],
          ["shorts-02-src", "vod2897954926-k10", 34.9, 36.8]]
