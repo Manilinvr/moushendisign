@@ -6,12 +6,22 @@ censor = "beep"         # аудитория — подростки: мат за
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2897017965"
+# RavshanN: BetBoom «новым клиентам» справа сверху; вебка слева внизу — плашка справа
+masks = [[0.89, 0.0, 0.11, 0.33]]
+plate_side = "right"
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2896935082"
+# leva2k: промокод/фрибет слева сверху, ggsel справа сверху, карта банка справа внизу;
+# слева внизу статистика тура — плашка справа
+masks = [[0.0, 0.0, 0.16, 0.16], [0.86, 0.0, 0.14, 0.09], [0.86, 0.79, 0.14, 0.17]]
+plate_side = "right"
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2896973093"
+# ZLOYn: рекламы нет; вебка слева — плашка справа
+plate_side = "right"
 
 [[stream]]
 url = "https://www.twitch.tv/videos/2896940076"
+# buster: колонка бонусов/RAVE слева, Winline/Tornado справа (маски — после листов prepare)
