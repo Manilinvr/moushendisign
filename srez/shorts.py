@@ -185,12 +185,12 @@ def _path_expr(points, dur, lo, hi, dead=80, move=0.4):
             cur, busy = to, t + move
     if not keys:
         return f"{cur:.0f}"
-    expr = f"{cur:.0f}"
-    for i in range(len(keys) - 1, -1, -1):
-        t, x0, x1 = keys[i]
-        s_ = f"((t-{t:.2f})/{move})"
-        ease = f"{x0:.0f}+({x1 - x0:.0f})*{s_}*{s_}*(3-2*{s_})"
-        expr = f"if(lt(t,{t:.2f}),{x0:.0f},if(lt(t,{t + move:.2f}),{ease},{expr}))"
+    # сумма переводов, а не вложенные if: у ffmpeg предел вложенности, и на живой камере с частыми
+    # переводами (30+) выражение не разбирается
+    expr = f"{keys[0][1]:.0f}"
+    for t, x0, x1 in keys:
+        s_ = f"clip((t-{t:.2f})/{move},0,1)"
+        expr += f"+({round(x1) - round(x0)})*{s_}*{s_}*(3-2*{s_})"
     return expr
 
 
